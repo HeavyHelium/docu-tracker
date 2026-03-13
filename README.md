@@ -1,26 +1,26 @@
 # docu-tracker
 
-A CLI tool that automatically tracks PDF and DOCX files across your folders, extracts metadata using Claude AI, and organizes them by topic with a reading queue.
+A CLI tool that automatically tracks PDF and DOCX files across your folders, extracts metadata using an LLM API call, and organizes them by topic with a reading queue.
 
 Stop losing track of papers and documents. Scan once, find anything instantly.
 
 ## Features
 
-- **Auto-extraction** — titles, authors, and summaries pulled from PDFs and DOCX files using Claude AI (~$0.004/document with Haiku)
+- **Auto-extraction** — titles, authors, and summaries pulled from PDFs and DOCX files via LLM API (~$0.004/document with default model)
 - **Topic classification** — documents auto-classified into customizable categories with descriptions that guide the LLM
 - **Multi-folder scanning** — scan multiple directories, with a Source column showing where each document came from
 - **Duplicate detection** — SHA-256 hashing tracks files even if copied to multiple locations
 - **Reading queue** — mark documents as unread, reading, or read
 - **Flexible filtering** — by topic, status, source folder, date range, or week
 - **Reclassify on demand** — update topics after adding new categories, without rescanning files
-- **Configurable model** — defaults to Claude Haiku, but swap in any Anthropic model
+- **Configurable model** — defaults to a fast, cheap model, but swap in any Anthropic model
 - **Parallel processing** — LLM calls run concurrently (4 workers) for fast bulk scanning
 - **Rich terminal UI** — colored tables, status indicators, and detailed panels
 
 ## Installation
 
 ```bash
-git clone https://github.com/youruser/download-docu-tracker.git
+git clone https://github.com/HeavyHelium/download-docu-tracker.git
 cd download-docu-tracker
 python -m venv .venv
 source .venv/bin/activate
@@ -222,7 +222,7 @@ export DOCU_TRACKER_MODEL=claude-sonnet-4-5-20241022
 
 ## Cost
 
-docu-tracker defaults to Claude Haiku (`claude-haiku-4-5-20251001`), one of the cheapest models available:
+docu-tracker defaults to `claude-haiku-4-5-20251001`, one of the cheapest models available:
 
 | Operation | Cost |
 |-----------|------|
@@ -259,7 +259,7 @@ src/docu_tracker/
   db.py         # SQLite database (documents, topics, paths)
   scanner.py    # File discovery and SHA-256 hashing
   extractor.py  # PDF/DOCX text extraction
-  analyzer.py   # Claude API integration with tool_use
+  analyzer.py   # LLM API integration with tool_use
   config.py     # Configuration loading (env > .env > yaml)
 ```
 
