@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "docu-tracker"
+version = "0.1.0"
+description = "Track and manage downloaded documents"
+requires-python = ">=3.10"
+dependencies = [
+    "click>=8.0",
+    "PyMuPDF>=1.23",
+    "python-docx>=1.0",
+    "anthropic>=0.39",
+    "PyYAML>=6.0",
+    "python-dotenv>=1.0",
+    "rich>=13.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-tmp-files>=0.0.2",
+]
+
+[project.scripts]
+docu-tracker = "docu_tracker.cli:cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]
