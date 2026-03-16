@@ -415,7 +415,10 @@ def _print_docs_table(docs):
             date,
         )
 
-    _get_console().print(table)
+    con = _get_console()
+    con.print(table)
+    count = len(docs)
+    con.print(f"\n[dim]{count} document{'s' if count != 1 else ''}[/dim]")
 
 
 def _print_docs_by_week(docs):
@@ -433,9 +436,13 @@ def _print_docs_by_week(docs):
             week_key = "Unknown"
         weeks[week_key].append(doc)
 
+    con = _get_console()
     for week_key, week_docs in weeks.items():
-        _get_console().print(f"\n[bold magenta]Week of {week_key}[/bold magenta]")
+        con.print(f"\n[bold magenta]Week of {week_key}[/bold magenta]")
         _print_docs_table(week_docs)
+
+    total = len(docs)
+    con.print(f"\n[dim]{total} document{'s' if total != 1 else ''} total[/dim]")
 
 
 @cli.command()
