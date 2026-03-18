@@ -41,7 +41,7 @@ textarea {
 
 .app-shell {
   width: min(1680px, calc(100vw - 24px));
-  margin: 24px auto 40px;
+  margin: 18px auto 32px;
 }
 
 .hero,
@@ -95,6 +95,18 @@ textarea {
   max-width: 14ch;
 }
 
+.brand-title {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.brand-icon {
+  width: clamp(42px, 5vw, 58px);
+  height: clamp(42px, 5vw, 58px);
+  flex: 0 0 auto;
+}
+
 .hero-copy {
   margin: 18px 0 0;
   max-width: 66ch;
@@ -125,7 +137,7 @@ textarea {
 }
 
 .toolbar {
-  margin-top: 18px;
+  margin-top: 14px;
   padding: 18px;
   border-radius: var(--radius);
   display: flex;
@@ -198,9 +210,10 @@ textarea:focus {
 
 .layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.95fr) minmax(400px, 0.85fr);
+  grid-template-columns: minmax(0, 2.45fr) minmax(340px, 0.8fr);
   gap: 18px;
-  margin-top: 18px;
+  margin-top: 14px;
+  align-items: start;
 }
 
 .panel {
@@ -211,6 +224,11 @@ textarea:focus {
 .sidebar {
   display: grid;
   gap: 18px;
+  align-content: start;
+  grid-auto-rows: max-content;
+  max-height: calc(100vh - 260px);
+  overflow: auto;
+  padding-right: 4px;
 }
 
 .section-heading {
@@ -231,6 +249,7 @@ textarea:focus {
 }
 
 .table-wrap {
+  max-height: calc(100vh - 360px);
   overflow: auto;
   border-radius: 18px;
   border: 1px solid rgba(50, 71, 67, 0.1);
@@ -238,8 +257,51 @@ textarea:focus {
 }
 
 table {
-  width: 100%;
+  width: 1046px;
+  min-width: 100%;
   border-collapse: collapse;
+  table-layout: fixed;
+}
+
+th:nth-child(1),
+td:nth-child(1) {
+  width: 64px;
+}
+
+th:nth-child(2),
+td:nth-child(2) {
+  width: 320px;
+}
+
+th:nth-child(3),
+td:nth-child(3) {
+  width: 180px;
+}
+
+th:nth-child(4),
+td:nth-child(4) {
+  width: 140px;
+}
+
+th:nth-child(5),
+td:nth-child(5) {
+  width: 104px;
+  padding-right: 3px;
+}
+
+th:nth-child(6),
+td:nth-child(6) {
+  width: 92px;
+  white-space: nowrap;
+  padding-left: 3px;
+  padding-right: 0;
+}
+
+th:nth-child(7),
+td:nth-child(7) {
+  width: 150px;
+  padding-left: 4px;
+  padding-right: 8px;
 }
 
 th,
@@ -276,6 +338,7 @@ tbody tr.selected {
 .title-cell strong {
   display: block;
   font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 .title-cell span,
@@ -283,6 +346,10 @@ tbody tr.selected {
 .path-list,
 .activity-item small {
   color: var(--muted);
+}
+
+.title-cell span {
+  overflow-wrap: anywhere;
 }
 
 .topic-tags {
@@ -354,7 +421,7 @@ tbody tr.selected {
 
 .row-actions-cell {
   display: flex;
-  gap: 8px;
+  gap: 4px;
   align-items: center;
   justify-content: flex-start;
 }
@@ -524,6 +591,13 @@ tbody tr.selected {
   .hero,
   .layout {
     grid-template-columns: 1fr;
+  }
+
+  .table-wrap,
+  .sidebar {
+    overflow: visible;
+    max-height: none;
+    padding-right: 0;
   }
 }
 

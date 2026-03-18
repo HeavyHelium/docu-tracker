@@ -12,6 +12,11 @@ const state = {
   },
 };
 
+const browserSessionId = (() => {
+  if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+  return `session-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+})();
+
 const els = {
   docsBody: document.getElementById("docs-body"),
   docCount: document.getElementById("doc-count"),
@@ -92,6 +97,28 @@ async function loadState(keepSelection = true) {
   renderTopics();
 }
 
+async function openBrowserSession() {
+  await api("/api/session/open", {
+    method: "POST",
+    body: { session_id: browserSessionId },
+  });
+}
+
+function closeBrowserSession() {
+  const payload = JSON.stringify({ session_id: browserSessionId });
+  if (navigator.sendBeacon) {
+    const blob = new Blob([payload], { type: "application/json" });
+    navigator.sendBeacon("/api/session/close", blob);
+    return;
+  }
+  fetch("/api/session/close", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: payload,
+    keepalive: true,
+  }).catch(() => {});
+}
+
 function renderFilters() {
   setSelectOptions(els.filterStatus, [{ value: "", label: "All statuses" }].concat(
     state.statuses.map((status) => ({ value: status, label: status }))
@@ -161,7 +188,7 @@ function renderDocuments() {
       <td>${doc.id}</td>
       <td class="title-cell">
         <strong>${escapeHtml(doc.title)}</strong>
-        <span>${escapeHtml(doc.authors || "No authors")}</span>
+        <span>${escapeHtml(truncateAuthors(doc.authors))}</span>
       </td>
       <td>
         <div class="topic-tags">
@@ -254,6 +281,13 @@ function formatDateTime(value) {
   return new Date(value).toLocaleString();
 }
 
+function truncateAuthors(value) {
+  if (!value) return "No authors";
+  const authors = value.split(",").map((part) => part.trim()).filter(Boolean);
+  if (authors.length <= 3) return authors.join(", ");
+  return `${authors.slice(0, 3).join(", ")} et al.`;
+}
+
 function selectedTopics() {
   return Array.from(els.detailTopics.querySelectorAll("input:checked")).map((input) => input.value);
 }
@@ -316,6 +350,16 @@ function escapeHtml(value) {
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
+}
+
+function setButtonBusy(button, busyText) {
+  const originalText = button.textContent;
+  button.disabled = true;
+  button.textContent = busyText;
+  return () => {
+    button.disabled = false;
+    button.textContent = originalText;
+  };
 }
 
 els.filterSearch.addEventListener("input", (event) => {
@@ -427,8 +471,9 @@ els.detailRescan.addEventListener("click", async () => {
 });
 
 els.scanButton.addEventListener("click", async () => {
+  const resetButton = setButtonBusy(els.scanButton, "Scanning...");
   try {
-    els.scanButton.disabled = true;
+    showFlash("Scan started.", "info");
     const result = await api("/api/scan", {
       method: "POST",
       body: {
@@ -442,13 +487,14 @@ els.scanButton.addEventListener("click", async () => {
   } catch (error) {
     showFlash(error.message, "error");
   } finally {
-    els.scanButton.disabled = false;
+    resetButton();
   }
 });
 
 els.rescanButton.addEventListener("click", async () => {
+  const resetButton = setButtonBusy(els.rescanButton, "Rescanning...");
   try {
-    els.rescanButton.disabled = true;
+    showFlash("Metadata rescan started.", "info");
     const result = await api("/api/rescan", {
       method: "POST",
       body: {
@@ -461,7 +507,7 @@ els.rescanButton.addEventListener("click", async () => {
   } catch (error) {
     showFlash(error.message, "error");
   } finally {
-    els.rescanButton.disabled = false;
+    resetButton();
   }
 });
 
@@ -524,6 +570,12 @@ els.topicsList.addEventListener("click", async (event) => {
   }
 });
 
-loadState().then(renderActivity).catch((error) => {
-  showFlash(error.message, "error");
-});
+window.addEventListener("pagehide", closeBrowserSession);
+
+Promise.all([openBrowserSession(), loadState()])
+  .then(() => {
+    renderActivity();
+  })
+  .catch((error) => {
+    showFlash(error.message, "error");
+  });

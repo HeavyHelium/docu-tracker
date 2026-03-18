@@ -51,6 +51,15 @@ anthropic_api_key: sk-ant-...
 EOF
 ```
 
+Using `~/.docu-tracker/config.yaml` is the most reliable option if you want `docu-tracker web` to work from any directory.
+Make sure the file is valid YAML, for example:
+
+```yaml
+anthropic_api_key: "sk-ant-..."
+scan_paths:
+  - ~/Downloads
+```
+
 ### 2. First Scan
 
 ```bash
@@ -109,6 +118,7 @@ docu-tracker web
 ```
 
 This now opens your browser automatically at `http://127.0.0.1:8421`.
+When the last UI tab is closed, the local server shuts itself down shortly after, so you can usually rerun `docu-tracker web` without manually killing an old process.
 
 If you want to skip that:
 
@@ -124,6 +134,8 @@ The web UI provides:
 - direct document opening from the browser UI
 - scan controls for configured paths or a selected path
 - metadata rescan for all documents or a single document
+
+If you want the web UI to work no matter which directory you launch it from, prefer storing your key and default scan paths in `~/.docu-tracker/config.yaml` instead of relying on a repo-local `.env`.
 
 The `Since` field applies to both bulk actions:
 
@@ -229,7 +241,7 @@ docu-tracker looks for configuration in this priority order:
 
 ```yaml
 # ~/.docu-tracker/config.yaml
-anthropic_api_key: sk-ant-...
+anthropic_api_key: "sk-ant-..."
 model: claude-haiku-4-5-20251001  # or any Anthropic model
 scan_paths:
   - ~/Downloads

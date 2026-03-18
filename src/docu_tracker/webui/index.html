@@ -4,6 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Docu Tracker</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="/app.css">
   </head>
   <body>
@@ -11,7 +12,10 @@
       <header class="hero">
         <div>
           <p class="eyebrow">Docu Tracker</p>
-          <h1>DocuTracker</h1>
+          <h1 class="brand-title">
+            <img src="/favicon.svg" alt="" class="brand-icon">
+            <span>DocuTracker</span>
+          </h1>
           <p class="hero-copy">
             The table stays fast for browsing, while the editor and topic manager keep the database mutable without dropping back to the CLI.
           </p>
@@ -114,14 +118,14 @@
                 Status
                 <select id="detail-status"></select>
               </label>
-              <fieldset>
-                <legend>Topics</legend>
-                <div id="detail-topics" class="topic-grid"></div>
-              </fieldset>
               <label>
                 Summary
                 <textarea id="detail-summary" rows="7"></textarea>
               </label>
+              <fieldset>
+                <legend>Topics</legend>
+                <div id="detail-topics" class="topic-grid"></div>
+              </fieldset>
               <div class="meta-grid">
                 <div>
                   <span class="meta-label">Modified</span>

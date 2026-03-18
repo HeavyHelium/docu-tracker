@@ -22,6 +22,7 @@ from docu_tracker.scanner import compute_file_hash, scan_directory
 ASSET_DIR = Path(__file__).resolve().parent / "webui"
 MAX_WORKERS = 4
 VALID_STATUSES = ["unread", "reading", "read", "needs_review"]
+SESSION_SHUTDOWN_GRACE_SECONDS = 2.0
 
 
 class HTTPError(Exception):
@@ -133,6 +134,10 @@ class DocuTrackerWebApp:
         )
         self.cwd = cwd or os.getcwd()
         self.db_path = os.path.join(self.config_dir, "tracker.db")
+        self.shutdown_callback = None
+        self._session_lock = threading.Lock()
+        self._session_ids = set()
+        self._shutdown_timer = None
 
     def __call__(self, environ, start_response):
         try:
@@ -159,6 +164,13 @@ class DocuTrackerWebApp:
                     _read_asset("app.js"),
                     "application/javascript; charset=utf-8",
                 )
+            if path == "/favicon.svg":
+                return _text_response(
+                    start_response,
+                    200,
+                    _read_asset("favicon.svg"),
+                    "image/svg+xml",
+                )
             if path == "/api/state" and method == "GET":
                 return _json_response(start_response, 200, self.build_state())
             if path == "/api/scan" and method == "POST":
@@ -180,6 +192,12 @@ class DocuTrackerWebApp:
                 payload = self._parse_json(environ)
                 result = self.create_topic(payload)
                 return _json_response(start_response, 201, result)
+            if path == "/api/session/open" and method == "POST":
+                payload = self._parse_json(environ)
+                return _json_response(start_response, 200, self.open_session(payload))
+            if path == "/api/session/close" and method == "POST":
+                payload = self._parse_json(environ)
+                return _json_response(start_response, 200, self.close_session(payload))
 
             if path.startswith("/api/documents/"):
                 return self._handle_document_route(path, method, environ, start_response)
@@ -255,6 +273,50 @@ class DocuTrackerWebApp:
             config_dir=self.config_dir,
             dotenv_path=os.path.join(self.cwd, ".env"),
         )
+
+    def _cancel_shutdown_timer(self):
+        if self._shutdown_timer is not None:
+            self._shutdown_timer.cancel()
+            self._shutdown_timer = None
+
+    def _schedule_shutdown(self):
+        def _maybe_shutdown():
+            with self._session_lock:
+                self._shutdown_timer = None
+                if self._session_ids:
+                    return
+            if self.shutdown_callback:
+                self.shutdown_callback()
+
+        self._cancel_shutdown_timer()
+        self._shutdown_timer = threading.Timer(
+            SESSION_SHUTDOWN_GRACE_SECONDS,
+            _maybe_shutdown,
+        )
+        self._shutdown_timer.daemon = True
+        self._shutdown_timer.start()
+
+    def open_session(self, payload):
+        session_id = (payload.get("session_id") or "").strip()
+        if not session_id:
+            raise HTTPError(400, "session_id is required")
+        with self._session_lock:
+            self._session_ids.add(session_id)
+            self._cancel_shutdown_timer()
+        return {"ok": True}
+
+    def close_session(self, payload):
+        session_id = (payload.get("session_id") or "").strip()
+        if not session_id:
+            raise HTTPError(400, "session_id is required")
+        should_schedule_shutdown = False
+        with self._session_lock:
+            self._session_ids.discard(session_id)
+            if not self._session_ids:
+                should_schedule_shutdown = True
+        if should_schedule_shutdown:
+            self._schedule_shutdown()
+        return {"ok": True}
 
     def build_state(self):
         config = self._load_config()
@@ -659,6 +721,7 @@ def serve_web_app(host="127.0.0.1", port=8421, config_dir=None, cwd=None):
         server_class=ThreadingWSGIServer,
         handler_class=QuietWSGIRequestHandler,
     ) as httpd:
+        app.shutdown_callback = httpd.shutdown
         print(
             f"Docu Tracker web UI running at http://{host}:{httpd.server_port}",
             file=sys.stdout,

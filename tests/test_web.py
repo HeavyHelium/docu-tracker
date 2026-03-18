@@ -249,6 +249,46 @@ def test_open_route_streams_primary_file(tmp_path, monkeypatch):
     assert "filename*" in header_map["content-disposition"]
 
 
+def test_last_session_close_triggers_shutdown(tmp_path, monkeypatch):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    app = DocuTrackerWebApp(config_dir=str(config_dir), cwd=str(tmp_path))
+
+    shutdown_calls = []
+
+    class ImmediateTimer:
+        def __init__(self, interval, callback):
+            self.callback = callback
+            self.daemon = False
+
+        def start(self):
+            self.callback()
+
+        def cancel(self):
+            pass
+
+    app.shutdown_callback = lambda: shutdown_calls.append(True)
+
+    with patch("docu_tracker.web.threading.Timer", ImmediateTimer):
+        open_response = call_app(
+            app,
+            "POST",
+            "/api/session/open",
+            {"session_id": "tab-1"},
+        )
+        close_response = call_app(
+            app,
+            "POST",
+            "/api/session/close",
+            {"session_id": "tab-1"},
+        )
+
+    assert open_response["status"].startswith("200")
+    assert close_response["status"].startswith("200")
+    assert shutdown_calls == [True]
+
+
 def test_web_command_invokes_server(tmp_path, monkeypatch):
     config_dir = tmp_path / "config"
     config_dir.mkdir()
