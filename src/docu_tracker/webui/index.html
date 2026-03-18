@@ -10,7 +10,7 @@
   <body>
     <div class="app-shell">
       <header class="hero">
-        <div>
+        <div class="hero-copy-block">
           <p class="eyebrow">Docu Tracker</p>
           <h1 class="brand-title">
             <img src="/favicon.svg" alt="" class="brand-icon">
@@ -34,7 +34,43 @@
             </div>
           </div>
         </div>
-        <div></div>
+        <div class="hero-visual-toolbar">
+          <div>
+            <p class="section-kicker">Analytics</p>
+            <h2 class="hero-visual-title">Time Window</h2>
+          </div>
+          <label class="hero-timeframe">
+            <span class="stat-label">Range</span>
+            <select id="hero-timeframe">
+              <option value="4w">4 weeks</option>
+              <option value="8w" selected>8 weeks</option>
+              <option value="12w">12 weeks</option>
+              <option value="24w">24 weeks</option>
+              <option value="all">All time</option>
+            </select>
+          </label>
+        </div>
+        <section class="hero-chart-card hero-snapshot-card">
+          <p class="section-kicker">Status Mix</p>
+          <div class="hero-chart-layout">
+            <div id="hero-status-chart" class="hero-donut" aria-hidden="true">
+              <div class="hero-donut-core">
+                <strong id="hero-donut-value">0</strong>
+                <span>docs</span>
+              </div>
+            </div>
+            <div id="hero-status-legend" class="hero-status-legend"></div>
+          </div>
+        </section>
+        <section class="hero-chart-card hero-trend-card">
+          <p class="section-kicker">Weekly Activity</p>
+          <div id="hero-line-chart" class="hero-line-chart"></div>
+        </section>
+        <section class="hero-chart-card hero-topics-card">
+          <p class="section-kicker">Top Topics</p>
+          <div id="hero-topic-bars" class="hero-topic-bars"></div>
+        </section>
+        <div id="hero-tooltip" class="hero-tooltip hidden" role="status" aria-live="polite"></div>
       </header>
 
       <section class="toolbar panel">
@@ -49,7 +85,10 @@
           </label>
           <label>
             Topic
-            <select id="filter-topic"></select>
+            <details id="filter-topic" class="multi-select">
+              <summary id="filter-topic-summary">All topics</summary>
+              <div id="filter-topic-options" class="multi-select-options"></div>
+            </details>
           </label>
         </div>
         <div class="toolbar-group">

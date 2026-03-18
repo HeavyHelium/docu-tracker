@@ -5,11 +5,19 @@ const state = {
   scanPaths: [],
   selectedId: null,
   activity: [],
+  analyticsTimeframe: "8w",
   filters: {
     search: "",
     status: "",
-    topic: "",
+    topics: [],
   },
+};
+
+const STATUS_VISUALS = {
+  unread: { label: "Unread", color: "#e6b146" },
+  reading: { label: "Reading", color: "#0b6e62" },
+  read: { label: "Read", color: "#4a8a6f" },
+  needs_review: { label: "Needs review", color: "#bf5f3e" },
 };
 
 const browserSessionId = (() => {
@@ -23,6 +31,8 @@ const els = {
   filterSearch: document.getElementById("filter-search"),
   filterStatus: document.getElementById("filter-status"),
   filterTopic: document.getElementById("filter-topic"),
+  filterTopicSummary: document.getElementById("filter-topic-summary"),
+  filterTopicOptions: document.getElementById("filter-topic-options"),
   scanPath: document.getElementById("scan-path"),
   scanSince: document.getElementById("scan-since"),
   scanButton: document.getElementById("scan-button"),
@@ -48,6 +58,14 @@ const els = {
   statDocs: document.getElementById("stat-docs"),
   statReading: document.getElementById("stat-reading"),
   statReview: document.getElementById("stat-review"),
+  heroStatusChart: document.getElementById("hero-status-chart"),
+  heroDonutValue: document.getElementById("hero-donut-value"),
+  heroStatusLegend: document.getElementById("hero-status-legend"),
+  heroTopicBars: document.getElementById("hero-topic-bars"),
+  heroTimeframe: document.getElementById("hero-timeframe"),
+  heroLineChart: document.getElementById("hero-line-chart"),
+  heroVisual: document.querySelector(".hero"),
+  heroTooltip: document.getElementById("hero-tooltip"),
   activityLog: document.getElementById("activity-log"),
   flash: document.getElementById("flash"),
 };
@@ -124,9 +142,13 @@ function renderFilters() {
     state.statuses.map((status) => ({ value: status, label: status }))
   ), state.filters.status);
 
-  setSelectOptions(els.filterTopic, [{ value: "", label: "All topics" }].concat(
-    state.topics.map((topic) => ({ value: topic.name, label: topic.name }))
-  ), state.filters.topic);
+  els.filterTopicOptions.innerHTML = state.topics.map((topic) => `
+    <label class="multi-select-option">
+      <input type="checkbox" value="${escapeHtml(topic.name)}" ${state.filters.topics.includes(topic.name) ? "checked" : ""}>
+      <span>${escapeHtml(topic.name)}</span>
+    </label>
+  `).join("");
+  els.filterTopicSummary.textContent = topicFilterLabel();
 
   setSelectOptions(els.scanPath, [{ value: "", label: "Configured paths" }].concat(
     state.scanPaths.map((path) => ({ value: path, label: path }))
@@ -147,16 +169,236 @@ function setSelectOptions(select, options, selectedValue) {
 }
 
 function renderStats() {
-  els.statDocs.textContent = String(state.documents.length);
-  els.statReading.textContent = String(state.documents.filter((doc) => doc.status === "reading").length);
-  els.statReview.textContent = String(state.documents.filter((doc) => doc.status === "needs_review").length);
+  const totalDocs = state.documents.length;
+  const readingDocs = state.documents.filter((doc) => doc.status === "reading").length;
+  const reviewDocs = state.documents.filter((doc) => doc.status === "needs_review").length;
+  els.statDocs.textContent = String(totalDocs);
+  els.statReading.textContent = String(readingDocs);
+  els.statReview.textContent = String(reviewDocs);
+  renderHeroVisuals();
+}
+
+function renderHeroVisuals() {
+  const filteredDocs = documentsForAnalyticsWindow();
+  const totalDocs = filteredDocs.length;
+  const statusOrder = ["unread", "reading", "read", "needs_review"];
+  const statusCounts = Object.fromEntries(
+    statusOrder.map((status) => [
+      status,
+      filteredDocs.filter((doc) => doc.status === status).length,
+    ])
+  );
+
+  const gradientStops = [];
+  let start = 0;
+  for (const status of statusOrder) {
+    const count = statusCounts[status];
+    const degrees = totalDocs ? (count / totalDocs) * 360 : 0;
+    const end = start + degrees;
+    if (degrees > 0) {
+      gradientStops.push(`${STATUS_VISUALS[status].color} ${start}deg ${end}deg`);
+    }
+    start = end;
+  }
+  if (!gradientStops.length) {
+    gradientStops.push("rgba(36, 53, 48, 0.08) 0deg 360deg");
+  }
+
+  els.heroStatusChart.style.background = `conic-gradient(${gradientStops.join(", ")})`;
+  els.heroStatusChart.dataset.tooltip = `${totalDocs} documents in ${timeframeLabel()}`;
+  els.heroDonutValue.textContent = String(totalDocs);
+  els.heroStatusLegend.innerHTML = statusOrder.map((status) => {
+    const count = statusCounts[status];
+    const share = totalDocs ? Math.round((count / totalDocs) * 100) : 0;
+    return `
+      <div class="hero-status-item" data-tooltip="${escapeAttribute(`${STATUS_VISUALS[status].label}: ${count} documents (${share}%)`)}">
+        <span class="hero-status-dot" style="background:${STATUS_VISUALS[status].color}"></span>
+        <div>
+          <strong>${STATUS_VISUALS[status].label}</strong>
+          <small>${count} · ${share}%</small>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  const topicCounts = new Map();
+  for (const doc of filteredDocs) {
+    for (const topic of doc.topics) {
+      topicCounts.set(topic, (topicCounts.get(topic) || 0) + 1);
+    }
+  }
+  const topTopics = Array.from(topicCounts.entries())
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 4);
+  const maxTopicCount = topTopics[0]?.[1] || 1;
+
+  if (!topTopics.length) {
+    els.heroTopicBars.innerHTML = `<div class="hero-topic-empty">No topic data yet.</div>`;
+  } else {
+    els.heroTopicBars.innerHTML = topTopics.map(([topic, count]) => {
+      const width = `${Math.max(24, Math.round((count / maxTopicCount) * 100))}%`;
+      return `
+        <div class="hero-topic-row" data-tooltip="${escapeAttribute(`${topic}: ${count} documents in ${timeframeLabel()}`)}">
+          <div class="hero-topic-meta">
+            <span>${escapeHtml(topic)}</span>
+            <strong>${count}</strong>
+          </div>
+          <div class="hero-topic-track">
+            <div class="hero-topic-fill" style="${topicColorStyle(topic)} width:${width}"></div>
+          </div>
+        </div>
+      `;
+    }).join("");
+  }
+
+  renderWeeklyLineChart(filteredDocs);
+}
+
+function documentsForAnalyticsWindow() {
+  if (state.analyticsTimeframe === "all") {
+    return state.documents.filter((doc) => parseDocumentDate(doc));
+  }
+
+  const weeks = Number.parseInt(state.analyticsTimeframe, 10);
+  if (Number.isNaN(weeks)) {
+    return state.documents.filter((doc) => parseDocumentDate(doc));
+  }
+
+  const cutoff = new Date();
+  cutoff.setHours(0, 0, 0, 0);
+  cutoff.setDate(cutoff.getDate() - weeks * 7);
+  return state.documents.filter((doc) => {
+    const date = parseDocumentDate(doc);
+    return date && date >= cutoff;
+  });
+}
+
+function parseDocumentDate(doc) {
+  if (!doc?.file_modified_at) return null;
+  const date = new Date(doc.file_modified_at);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function startOfWeek(date) {
+  const value = new Date(date);
+  value.setHours(0, 0, 0, 0);
+  value.setDate(value.getDate() - value.getDay() + 1);
+  return value;
+}
+
+function weekKey(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function formatWeekTick(dateString) {
+  const date = new Date(dateString);
+  return date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function buildWeeklySeries(filteredDocs) {
+  const datedDocs = filteredDocs
+    .map((doc) => parseDocumentDate(doc))
+    .filter(Boolean)
+    .sort((a, b) => a - b);
+
+  if (!datedDocs.length) return [];
+
+  const firstWeek = startOfWeek(datedDocs[0]);
+  const lastWeek = startOfWeek(datedDocs[datedDocs.length - 1]);
+  const counts = new Map();
+
+  for (const date of datedDocs) {
+    const key = weekKey(startOfWeek(date));
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+
+  const series = [];
+  const cursor = new Date(firstWeek);
+  while (cursor <= lastWeek) {
+    const key = weekKey(cursor);
+    series.push({ key, count: counts.get(key) || 0 });
+    cursor.setDate(cursor.getDate() + 7);
+  }
+  return series;
+}
+
+function renderWeeklyLineChart(filteredDocs) {
+  const series = buildWeeklySeries(filteredDocs);
+  if (!series.length) {
+    els.heroLineChart.innerHTML = `<div class="hero-topic-empty">No dated documents in this window.</div>`;
+    return;
+  }
+
+  const width = 520;
+  const height = 190;
+  const padding = { top: 18, right: 18, bottom: 34, left: 22 };
+  const plotWidth = width - padding.left - padding.right;
+  const plotHeight = height - padding.top - padding.bottom;
+  const maxCount = Math.max(...series.map((point) => point.count), 1);
+
+  const points = series.map((point, index) => {
+    const x = padding.left + (series.length === 1 ? plotWidth / 2 : (index / (series.length - 1)) * plotWidth);
+    const y = padding.top + plotHeight - (point.count / maxCount) * plotHeight;
+    return { ...point, x, y };
+  });
+
+  const linePath = points.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ");
+  const areaPath = `${linePath} L ${points[points.length - 1].x} ${padding.top + plotHeight} L ${points[0].x} ${padding.top + plotHeight} Z`;
+  const tickStep = Math.max(1, Math.ceil(series.length / 4));
+  const yTicks = [0, Math.ceil(maxCount / 2), maxCount].filter((value, index, values) => values.indexOf(value) === index);
+
+  els.heroLineChart.innerHTML = `
+    <svg viewBox="0 0 ${width} ${height}" class="hero-line-svg" role="img" aria-label="Weekly document counts">
+      ${yTicks.map((tick) => {
+        const y = padding.top + plotHeight - (tick / maxCount) * plotHeight;
+        return `
+          <line x1="${padding.left}" y1="${y}" x2="${width - padding.right}" y2="${y}" class="hero-grid-line"></line>
+          <text x="${padding.left - 8}" y="${y + 4}" class="hero-axis-label hero-axis-label-y">${tick}</text>
+        `;
+      }).join("")}
+      <path d="${areaPath}" class="hero-area-fill"></path>
+      <path d="${linePath}" class="hero-line-path"></path>
+      ${points.map((point) => `
+        <circle
+          cx="${point.x}"
+          cy="${point.y}"
+          r="5"
+          class="hero-line-point"
+          data-tooltip="${escapeAttribute(`${formatWeekTick(point.key)} week: ${point.count} documents`)}"
+        ></circle>
+      `).join("")}
+      ${points.map((point, index) => index % tickStep === 0 || index === points.length - 1 ? `
+        <text x="${point.x}" y="${height - 8}" class="hero-axis-label" text-anchor="middle">${formatWeekTick(point.key)}</text>
+      ` : "").join("")}
+    </svg>
+  `;
+}
+
+function timeframeLabel() {
+  const labels = {
+    "4w": "4 weeks",
+    "8w": "8 weeks",
+    "12w": "12 weeks",
+    "24w": "24 weeks",
+    all: "all time",
+  };
+  return labels[state.analyticsTimeframe] || state.analyticsTimeframe;
+}
+
+function topicFilterLabel() {
+  if (!state.filters.topics.length) return "All topics";
+  if (state.filters.topics.length === 1) return state.filters.topics[0];
+  return `${state.filters.topics.length} topics`;
 }
 
 function getVisibleDocuments() {
   const term = state.filters.search.trim().toLowerCase();
   return state.documents.filter((doc) => {
     if (state.filters.status && doc.status !== state.filters.status) return false;
-    if (state.filters.topic && !doc.topics.includes(state.filters.topic)) return false;
+    if (state.filters.topics.length && !state.filters.topics.some((topic) => doc.topics.includes(topic))) return false;
     if (!term) return true;
     const haystack = [
       doc.title,
@@ -352,6 +594,35 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;");
 }
 
+function escapeAttribute(value) {
+  return escapeHtml(value).replaceAll("'", "&#39;");
+}
+
+function hideHeroTooltip() {
+  els.heroTooltip.classList.add("hidden");
+}
+
+function showHeroTooltip(event, message) {
+  if (!message) {
+    hideHeroTooltip();
+    return;
+  }
+  const rect = els.heroVisual.getBoundingClientRect();
+  els.heroTooltip.textContent = message;
+  els.heroTooltip.classList.remove("hidden");
+  const tooltipRect = els.heroTooltip.getBoundingClientRect();
+  const left = Math.min(
+    Math.max(12, event.clientX - rect.left + 12),
+    Math.max(12, rect.width - tooltipRect.width - 12)
+  );
+  const top = Math.min(
+    Math.max(12, event.clientY - rect.top + 12),
+    Math.max(12, rect.height - tooltipRect.height - 12)
+  );
+  els.heroTooltip.style.left = `${left}px`;
+  els.heroTooltip.style.top = `${top}px`;
+}
+
 function setButtonBusy(button, busyText) {
   const originalText = button.textContent;
   button.disabled = true;
@@ -373,8 +644,35 @@ els.filterStatus.addEventListener("change", (event) => {
 });
 
 els.filterTopic.addEventListener("change", (event) => {
-  state.filters.topic = event.target.value;
+  const input = event.target.closest("input[type='checkbox']");
+  if (!input) return;
+  state.filters.topics = Array.from(
+    els.filterTopicOptions.querySelectorAll("input:checked")
+  ).map((checkbox) => checkbox.value);
+  els.filterTopicSummary.textContent = topicFilterLabel();
   renderDocuments();
+});
+
+els.heroVisual.addEventListener("mousemove", (event) => {
+  const target = event.target.closest("[data-tooltip]");
+  if (!target) {
+    hideHeroTooltip();
+    return;
+  }
+  showHeroTooltip(event, target.dataset.tooltip);
+});
+
+els.heroVisual.addEventListener("mouseleave", hideHeroTooltip);
+
+els.heroTimeframe.addEventListener("change", (event) => {
+  state.analyticsTimeframe = event.target.value;
+  renderHeroVisuals();
+});
+
+document.addEventListener("click", (event) => {
+  if (!els.filterTopic.open) return;
+  if (els.filterTopic.contains(event.target)) return;
+  els.filterTopic.open = false;
 });
 
 els.docsBody.addEventListener("click", async (event) => {

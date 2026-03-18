@@ -54,12 +54,13 @@ textarea {
 
 .hero {
   display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(260px, 0.8fr);
+  grid-template-columns: minmax(0, 1.02fr) minmax(240px, 0.47fr) minmax(420px, 0.9fr) minmax(220px, 0.42fr);
   gap: 20px;
   padding: 28px;
   border-radius: calc(var(--radius) + 8px);
   overflow: hidden;
   position: relative;
+  align-items: start;
 }
 
 .hero::after {
@@ -114,12 +115,250 @@ textarea {
   line-height: 1.6;
 }
 
+.hero-copy-block {
+  max-width: 760px;
+  grid-column: 1;
+  grid-row: 1 / span 2;
+}
+
 .hero-meta {
   display: flex;
   flex-wrap: wrap;
   gap: 14px;
   align-content: start;
   margin-top: 20px;
+}
+
+.hero-visual-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: end;
+  grid-column: 2 / -1;
+  grid-row: 1;
+}
+
+.hero-visual-title {
+  margin: 8px 0 0;
+  font-size: 1.45rem;
+  line-height: 1.05;
+}
+
+.hero-timeframe {
+  min-width: 140px;
+}
+
+.hero-chart-card {
+  padding: 18px;
+  border-radius: 22px;
+  background: rgba(255, 251, 244, 0.76);
+  border: 1px solid rgba(50, 71, 67, 0.08);
+}
+
+.hero-snapshot-card {
+  grid-column: 2;
+  grid-row: 2;
+}
+
+.hero-trend-card {
+  grid-column: 3;
+  grid-row: 2;
+}
+
+.hero-topics-card {
+  grid-column: 4;
+  grid-row: 2;
+}
+
+.hero-chart-layout {
+  display: grid;
+  grid-template-columns: 116px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  margin-top: 12px;
+}
+
+.hero-donut {
+  width: 116px;
+  height: 116px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: rgba(36, 53, 48, 0.08);
+}
+
+.hero-donut-core {
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+  background: rgba(255, 248, 238, 0.96);
+  display: grid;
+  place-items: center;
+  text-align: center;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+.hero-donut-core strong {
+  display: block;
+  font-size: 1.7rem;
+  line-height: 1;
+}
+
+.hero-donut-core span {
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.hero-status-legend {
+  display: grid;
+  gap: 8px;
+}
+
+.hero-status-item {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 8px;
+  margin: 0 -8px;
+  border-radius: 14px;
+  transition: background 140ms ease, transform 140ms ease;
+}
+
+.hero-status-item strong,
+.hero-topic-meta strong {
+  display: block;
+  font-size: 0.95rem;
+}
+
+.hero-status-item:hover,
+.hero-topic-row:hover {
+  background: rgba(11, 110, 98, 0.06);
+}
+
+.hero-status-item small {
+  color: var(--muted);
+}
+
+.hero-status-dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.58);
+}
+
+.hero-topic-bars {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.hero-topic-row {
+  display: grid;
+  gap: 6px;
+  padding: 6px 8px;
+  margin: 0 -8px;
+  border-radius: 14px;
+  transition: background 140ms ease;
+}
+
+.hero-topic-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  font-size: 0.92rem;
+}
+
+.hero-topic-track {
+  height: 12px;
+  border-radius: 999px;
+  background: rgba(36, 53, 48, 0.08);
+  overflow: hidden;
+}
+
+.hero-topic-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--topic-bg, rgba(11, 110, 98, 0.1));
+  border: 1px solid var(--topic-border, rgba(11, 110, 98, 0.2));
+}
+
+.hero-topic-empty {
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.hero-tooltip {
+  position: absolute;
+  z-index: 30;
+  max-width: 220px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(36, 53, 48, 0.92);
+  color: #f8fbfa;
+  font-size: 0.88rem;
+  line-height: 1.35;
+  pointer-events: none;
+  box-shadow: var(--shadow);
+}
+
+.hero-line-chart {
+  margin-top: 10px;
+  min-height: 150px;
+}
+
+.hero-line-svg {
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.hero-grid-line {
+  stroke: rgba(36, 53, 48, 0.12);
+  stroke-width: 1;
+}
+
+.hero-line-path {
+  fill: none;
+  stroke: #0b6e62;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.hero-area-fill {
+  fill: rgba(11, 110, 98, 0.12);
+}
+
+.hero-line-point {
+  fill: #fff8ee;
+  stroke: #0b6e62;
+  stroke-width: 2;
+}
+
+.hero-donut[data-tooltip],
+.hero-status-item[data-tooltip],
+.hero-topic-row[data-tooltip],
+.hero-line-point[data-tooltip] {
+  cursor: pointer;
+}
+
+.hero-line-point:hover {
+  stroke-width: 3;
+}
+
+.hero-axis-label {
+  fill: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
+.hero-axis-label-y {
+  text-anchor: end;
 }
 
 .stat-card {
@@ -144,6 +383,8 @@ textarea {
   flex-wrap: wrap;
   gap: 16px;
   justify-content: space-between;
+  position: relative;
+  z-index: 20;
 }
 
 .toolbar-group {
@@ -151,6 +392,53 @@ textarea {
   flex-wrap: wrap;
   gap: 12px;
   align-items: end;
+}
+
+.multi-select {
+  position: relative;
+  min-width: 180px;
+}
+
+.multi-select summary {
+  list-style: none;
+  border: 1px solid rgba(50, 71, 67, 0.14);
+  background: rgba(255, 255, 255, 0.82);
+  border-radius: 14px;
+  padding: 11px 13px;
+  cursor: pointer;
+  min-width: 180px;
+}
+
+.multi-select summary::-webkit-details-marker {
+  display: none;
+}
+
+.multi-select[open] summary {
+  border-color: rgba(11, 110, 98, 0.45);
+  outline: 2px solid rgba(11, 110, 98, 0.18);
+}
+
+.multi-select-options {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 10;
+  min-width: 220px;
+  max-height: 240px;
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid rgba(50, 71, 67, 0.12);
+  border-radius: 16px;
+  background: rgba(255, 251, 244, 0.98);
+  box-shadow: var(--shadow);
+}
+
+.multi-select-option {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 4px;
+  font-size: 0.92rem;
 }
 
 label,
@@ -214,6 +502,8 @@ textarea:focus {
   gap: 18px;
   margin-top: 14px;
   align-items: start;
+  position: relative;
+  z-index: 1;
 }
 
 .panel {
@@ -601,6 +891,20 @@ tbody tr.selected {
 @media (max-width: 1120px) {
   .hero,
   .layout {
+    grid-template-columns: 1fr;
+  }
+
+  .hero-copy-block,
+  .hero-visual-toolbar,
+  .hero-trend-card,
+  .hero-snapshot-card,
+  .hero-topics-card {
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  .hero-topic-bars,
+  .hero-chart-layout {
     grid-template-columns: 1fr;
   }
 
