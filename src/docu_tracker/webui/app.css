@@ -133,7 +133,7 @@ textarea {
   display: flex;
   justify-content: space-between;
   gap: 16px;
-  align-items: end;
+  align-items: start;
   grid-column: 2 / -1;
   grid-row: 1;
 }
@@ -145,6 +145,9 @@ textarea {
 }
 
 .hero-timeframe {
+  display: grid;
+  gap: 8px;
+  align-content: start;
   min-width: 140px;
 }
 
@@ -375,16 +378,27 @@ textarea {
   font-size: 2rem;
 }
 
-.toolbar {
+.toolbar-layout {
   margin-top: 14px;
-  padding: 18px;
-  border-radius: var(--radius);
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(0, 0.94fr) minmax(0, 1.06fr);
   gap: 16px;
-  justify-content: space-between;
   position: relative;
   z-index: 20;
+}
+
+.toolbar {
+  padding: 18px;
+  border-radius: var(--radius);
+  display: grid;
+  gap: 12px;
+  align-content: start;
+  min-height: 148px;
+}
+
+.toolbar-heading {
+  display: flex;
+  align-items: center;
 }
 
 .toolbar-group {
@@ -392,6 +406,19 @@ textarea {
   flex-wrap: wrap;
   gap: 12px;
   align-items: end;
+}
+
+.scan-group {
+  flex-wrap: nowrap;
+}
+
+.scan-actions {
+  display: flex;
+  gap: 12px;
+  align-items: end;
+  align-self: end;
+  flex-wrap: nowrap;
+  margin-left: auto;
 }
 
 .multi-select {
@@ -890,7 +917,8 @@ tbody tr.selected {
 
 @media (max-width: 1120px) {
   .hero,
-  .layout {
+  .layout,
+  .toolbar-layout {
     grid-template-columns: 1fr;
   }
 

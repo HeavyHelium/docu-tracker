@@ -73,36 +73,49 @@
         <div id="hero-tooltip" class="hero-tooltip hidden" role="status" aria-live="polite"></div>
       </header>
 
-      <section class="toolbar panel">
-        <div class="toolbar-group">
-          <label>
-            Search
-            <input id="filter-search" type="search" placeholder="Title, author, summary, path">
-          </label>
-          <label>
-            Status
-            <select id="filter-status"></select>
-          </label>
-          <label>
-            Topic
-            <details id="filter-topic" class="multi-select">
-              <summary id="filter-topic-summary">All topics</summary>
-              <div id="filter-topic-options" class="multi-select-options"></div>
-            </details>
-          </label>
-        </div>
-        <div class="toolbar-group">
-          <label>
-            Scan Path
-            <select id="scan-path"></select>
-          </label>
-          <label>
-            Since
-            <input id="scan-since" type="text" placeholder="7d or 24h">
-          </label>
-          <button id="scan-button" class="button button-primary">Scan Files</button>
-          <button id="rescan-button" class="button">Rescan Metadata</button>
-        </div>
+      <section class="toolbar-layout">
+        <section class="toolbar panel">
+          <div class="toolbar-heading">
+            <p class="section-kicker">Browse</p>
+          </div>
+          <div class="toolbar-group">
+            <label>
+              Search
+              <input id="filter-search" type="search" placeholder="Title, author, summary, path">
+            </label>
+            <label>
+              Status
+              <select id="filter-status"></select>
+            </label>
+            <label>
+              Topic
+              <details id="filter-topic" class="multi-select">
+                <summary id="filter-topic-summary">All topics</summary>
+                <div id="filter-topic-options" class="multi-select-options"></div>
+              </details>
+            </label>
+          </div>
+        </section>
+
+        <section class="toolbar panel">
+          <div class="toolbar-heading">
+            <p class="section-kicker">Scan</p>
+          </div>
+          <div class="toolbar-group scan-group">
+            <label>
+              Scan Path
+              <select id="scan-path"></select>
+            </label>
+            <label>
+              Since
+              <input id="scan-since" type="text" placeholder="7d or 24h">
+            </label>
+            <div class="scan-actions">
+              <button id="scan-button" class="button button-primary">Scan Files</button>
+              <button id="rescan-button" class="button">Rescan Metadata</button>
+            </div>
+          </div>
+        </section>
       </section>
 
       <main class="layout">
