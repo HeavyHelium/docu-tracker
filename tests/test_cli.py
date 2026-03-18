@@ -280,3 +280,23 @@ def test_reclassify_all(runner, tmp_path, monkeypatch):
             result = runner.invoke(cli, ["reclassify"])
     assert result.exit_code == 0
     assert "2 updated" in result.output
+
+
+def test_web_opens_browser_by_default(runner):
+    """web should open the browser and start the server."""
+    with patch("docu_tracker.web.open_web_ui") as mock_open:
+        with patch("docu_tracker.web.serve_web_app") as mock_serve:
+            result = runner.invoke(cli, ["web"])
+    assert result.exit_code == 0
+    mock_open.assert_called_once_with(host="127.0.0.1", port=8421)
+    mock_serve.assert_called_once()
+
+
+def test_web_can_skip_browser(runner):
+    """web --no-browser should only start the server."""
+    with patch("docu_tracker.web.open_web_ui") as mock_open:
+        with patch("docu_tracker.web.serve_web_app") as mock_serve:
+            result = runner.invoke(cli, ["web", "--no-browser"])
+    assert result.exit_code == 0
+    mock_open.assert_not_called()
+    mock_serve.assert_called_once()

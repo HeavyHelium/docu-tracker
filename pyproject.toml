@@ -28,3 +28,6 @@ docu-tracker = "docu_tracker.cli:cli"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+docu_tracker = ["webui/*"]

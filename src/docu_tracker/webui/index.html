@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Docu Tracker</title>
+    <link rel="stylesheet" href="/app.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Docu Tracker</p>
+          <h1>DocuTracker</h1>
+          <p class="hero-copy">
+            The table stays fast for browsing, while the editor and topic manager keep the database mutable without dropping back to the CLI.
+          </p>
+          <div class="hero-meta">
+            <div class="stat-card">
+              <span class="stat-label">Tracked</span>
+              <strong id="stat-docs">0</strong>
+            </div>
+            <div class="stat-card">
+              <span class="stat-label">Reading</span>
+              <strong id="stat-reading">0</strong>
+            </div>
+            <div class="stat-card">
+              <span class="stat-label">Needs Review</span>
+              <strong id="stat-review">0</strong>
+            </div>
+          </div>
+        </div>
+        <div></div>
+      </header>
+
+      <section class="toolbar panel">
+        <div class="toolbar-group">
+          <label>
+            Search
+            <input id="filter-search" type="search" placeholder="Title, author, summary, path">
+          </label>
+          <label>
+            Status
+            <select id="filter-status"></select>
+          </label>
+          <label>
+            Topic
+            <select id="filter-topic"></select>
+          </label>
+        </div>
+        <div class="toolbar-group">
+          <label>
+            Scan Path
+            <select id="scan-path"></select>
+          </label>
+          <label>
+            Since
+            <input id="scan-since" type="text" placeholder="7d or 24h">
+          </label>
+          <button id="scan-button" class="button button-primary">Scan Files</button>
+          <button id="rescan-button" class="button">Rescan Metadata</button>
+        </div>
+      </section>
+
+      <main class="layout">
+        <section class="panel table-panel">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">Library</p>
+              <h2>Document Queue</h2>
+            </div>
+            <span id="doc-count" class="pill"></span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Title</th>
+                  <th>Topics</th>
+                  <th>Status</th>
+                  <th>Source</th>
+                  <th>Modified</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="docs-body"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <aside class="sidebar">
+          <section class="panel detail-panel">
+            <div class="section-heading">
+              <div>
+                <p class="section-kicker">Editor</p>
+                <h2 id="detail-heading">Select a document</h2>
+              </div>
+              <button id="save-document" class="button button-primary" disabled>Save</button>
+            </div>
+            <div id="detail-empty" class="empty-state">
+              Pick a row to edit title, authors, summary, status, and categories.
+            </div>
+            <form id="detail-form" class="detail-form hidden">
+              <label>
+                Title
+                <input id="detail-title" type="text">
+              </label>
+              <label>
+                Authors
+                <input id="detail-authors" type="text">
+              </label>
+              <label>
+                Status
+                <select id="detail-status"></select>
+              </label>
+              <fieldset>
+                <legend>Topics</legend>
+                <div id="detail-topics" class="topic-grid"></div>
+              </fieldset>
+              <label>
+                Summary
+                <textarea id="detail-summary" rows="7"></textarea>
+              </label>
+              <div class="meta-grid">
+                <div>
+                  <span class="meta-label">Modified</span>
+                  <span id="detail-modified"></span>
+                </div>
+                <div>
+                  <span class="meta-label">Scanned</span>
+                  <span id="detail-scanned"></span>
+                </div>
+              </div>
+              <div>
+                <span class="meta-label">Paths</span>
+                <ul id="detail-paths" class="path-list"></ul>
+              </div>
+              <div class="detail-actions">
+                <button id="detail-open" type="button" class="button">Open Document</button>
+                <button id="detail-rescan" type="button" class="button">Rescan This Document</button>
+              </div>
+            </form>
+          </section>
+
+          <section class="panel topics-panel">
+            <div class="section-heading">
+              <div>
+                <p class="section-kicker">Categories</p>
+                <h2>Manage Topics</h2>
+              </div>
+            </div>
+            <form id="topic-create" class="create-topic">
+              <label>
+                New topic
+                <input id="new-topic-name" type="text" placeholder="Research">
+              </label>
+              <label>
+                Description
+                <input id="new-topic-description" type="text" placeholder="What belongs here and what does not">
+              </label>
+              <button class="button button-primary" type="submit">Add Topic</button>
+            </form>
+            <div id="topics-list" class="topics-list"></div>
+          </section>
+
+          <section class="panel activity-panel">
+            <div class="section-heading">
+              <div>
+                <p class="section-kicker">Activity</p>
+                <h2>Recent Actions</h2>
+              </div>
+            </div>
+            <div id="flash" class="flash hidden"></div>
+            <div id="activity-log" class="activity-log"></div>
+          </section>
+        </aside>
+      </main>
+    </div>
+    <script src="/app.js"></script>
+  </body>
+</html>

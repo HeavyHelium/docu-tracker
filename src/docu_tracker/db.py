@@ -228,6 +228,22 @@ class Database:
         )
         self.conn.commit()
 
+    def rename_topic(self, old_name, new_name):
+        if old_name == "Other":
+            raise ValueError("Cannot rename the 'Other' topic")
+        if not new_name.strip():
+            raise ValueError("Topic name cannot be empty")
+        existing = self.conn.execute(
+            "SELECT id FROM topics WHERE name = ?", (new_name,)
+        ).fetchone()
+        if existing and new_name != old_name:
+            raise ValueError(f"Topic '{new_name}' already exists")
+        self.conn.execute(
+            "UPDATE topics SET name = ? WHERE name = ?",
+            (new_name, old_name),
+        )
+        self.conn.commit()
+
     def remove_topic(self, name):
         if name == "Other":
             raise ValueError("Cannot remove the 'Other' topic")
@@ -279,6 +295,8 @@ class Database:
 
     def set_topics(self, doc_id, topic_names):
         """Replace all topics on a document."""
+        if not topic_names:
+            topic_names = ["Other"]
         self.conn.execute(
             "DELETE FROM document_topics WHERE document_id = ?", (doc_id,)
         )

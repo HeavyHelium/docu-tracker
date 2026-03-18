@@ -564,3 +564,16 @@ def untag(doc_id, topic_name):
     db.untag_document(doc_id, topic_name)
     click.echo(f"Removed '{topic_name}' from '{doc['title']}'.")
     db.close()
+
+
+@cli.command("web")
+@click.option("--host", default="127.0.0.1", show_default=True, help="Host interface to bind")
+@click.option("--port", default=8421, show_default=True, type=int, help="Port for the web UI")
+@click.option("--no-browser", is_flag=True, help="Do not open the browser automatically")
+def web_ui(host, port, no_browser):
+    """Launch the local web UI."""
+    from docu_tracker.web import open_web_ui, serve_web_app
+
+    if not no_browser:
+        open_web_ui(host=host, port=port)
+    serve_web_app(host=host, port=port, cwd=os.getcwd())

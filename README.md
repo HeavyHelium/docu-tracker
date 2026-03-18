@@ -16,6 +16,7 @@ Stop losing track of papers and documents. Scan once, find anything instantly.
 - **Configurable model** — defaults to a fast, cheap model, but swap in any Anthropic model
 - **Parallel processing** — LLM calls run concurrently (4 workers) for fast bulk scanning
 - **Rich terminal UI** — colored tables, status indicators, and detailed panels
+- **Local web UI** — edit document details, status, and topics in a browser, open files directly, and run scan/rescan workflows
 
 ## Installation
 
@@ -100,6 +101,36 @@ docu-tracker list --week                   # group by week
 The table includes a **Source** column showing which folder each document came from.
 
 Statuses: `unread` (yellow), `reading` (blue), `read` (green), `needs_review` (red).
+
+### Web UI
+
+```bash
+docu-tracker web
+```
+
+This now opens your browser automatically at `http://127.0.0.1:8421`.
+
+If you want to skip that:
+
+```bash
+docu-tracker web --no-browser
+```
+
+The web UI provides:
+
+- editable document table with quick status changes
+- side-panel editing for title, authors, summary, and topics
+- topic/category management with add, rename, describe, and delete
+- direct document opening from the browser UI
+- scan controls for configured paths or a selected path
+- metadata rescan for all documents or a single document
+
+The `Since` field applies to both bulk actions:
+
+- `Scan Files` only discovers files modified within that time window
+- `Rescan Metadata` only refreshes tracked documents whose `file_modified_at` falls within that time window
+
+The per-document `Rescan` button ignores `Since` and only refreshes that one record.
 
 ### Viewing Details
 
