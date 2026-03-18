@@ -506,6 +506,10 @@ tbody tr.selected {
   font-weight: 700;
 }
 
+.table-wrap .status-select {
+  width: 128px;
+}
+
 .status-select.status-unread {
   color: var(--warning);
   background: rgba(244, 211, 94, 0.14);
