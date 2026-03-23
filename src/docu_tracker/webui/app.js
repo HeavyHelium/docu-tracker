@@ -300,29 +300,57 @@ function formatWeekTick(dateString) {
 
 function buildWeeklySeries(filteredDocs) {
   const datedDocs = filteredDocs
-    .map((doc) => parseDocumentDate(doc))
-    .filter(Boolean)
-    .sort((a, b) => a - b);
+    .map((doc) => ({ doc, date: parseDocumentDate(doc) }))
+    .filter((entry) => entry.date)
+    .sort((a, b) => a.date - b.date);
 
   if (!datedDocs.length) return [];
 
-  const firstWeek = startOfWeek(datedDocs[0]);
-  const lastWeek = startOfWeek(datedDocs[datedDocs.length - 1]);
-  const counts = new Map();
+  const firstWeek = startOfWeek(datedDocs[0].date);
+  const lastWeek = startOfWeek(datedDocs[datedDocs.length - 1].date);
+  const weeklyStats = new Map();
 
-  for (const date of datedDocs) {
-    const key = weekKey(startOfWeek(date));
-    counts.set(key, (counts.get(key) || 0) + 1);
+  for (const entry of datedDocs) {
+    const key = weekKey(startOfWeek(entry.date));
+    if (!weeklyStats.has(key)) {
+      weeklyStats.set(key, { count: 0, topics: new Map() });
+    }
+    const bucket = weeklyStats.get(key);
+    bucket.count += 1;
+    for (const topic of entry.doc.topics) {
+      bucket.topics.set(topic, (bucket.topics.get(topic) || 0) + 1);
+    }
   }
 
   const series = [];
   const cursor = new Date(firstWeek);
   while (cursor <= lastWeek) {
     const key = weekKey(cursor);
-    series.push({ key, count: counts.get(key) || 0 });
+    const bucket = weeklyStats.get(key);
+    const topTopics = bucket
+      ? Array.from(bucket.topics.entries())
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .slice(0, 3)
+      : [];
+    series.push({
+      key,
+      count: bucket?.count || 0,
+      topTopics,
+    });
     cursor.setDate(cursor.getDate() + 7);
   }
   return series;
+}
+
+function weeklyTooltip(point) {
+  const heading = `${formatWeekTick(point.key)} week`;
+  if (!point.topTopics.length) {
+    return `${heading}\n${point.count} documents\nNo topics`;
+  }
+  const topics = point.topTopics
+    .map(([topic, count]) => `${topic} (${count})`)
+    .join(", ");
+  return `${heading}\n${point.count} documents\nTop topics: ${topics}`;
 }
 
 function renderWeeklyLineChart(filteredDocs) {
@@ -367,7 +395,7 @@ function renderWeeklyLineChart(filteredDocs) {
           cy="${point.y}"
           r="5"
           class="hero-line-point"
-          data-tooltip="${escapeAttribute(`${formatWeekTick(point.key)} week: ${point.count} documents`)}"
+          data-tooltip="${escapeAttribute(weeklyTooltip(point))}"
         ></circle>
       `).join("")}
       ${points.map((point, index) => index % tickStep === 0 || index === points.length - 1 ? `
