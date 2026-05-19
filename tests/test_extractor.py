@@ -2,6 +2,8 @@ import os
 import fitz  # PyMuPDF
 from docx import Document
 import pytest
+from unittest.mock import Mock, patch
+
 from docu_tracker.extractor import extract_text
 
 
@@ -36,6 +38,22 @@ def test_extract_text_from_pdf(sample_pdf):
     assert "Page 1 content" in text
     assert "Page 4 content" in text
     assert "Page 5 content" not in text
+
+
+def test_extract_text_from_pdf_falls_back_to_pdftotext(tmp_path):
+    """Should use pdftotext when PyMuPDF cannot extract text."""
+    path = str(tmp_path / "fallback.pdf")
+    with open(path, "wb") as f:
+        f.write(b"%PDF-1.7")
+
+    completed = Mock(returncode=0, stdout="Fallback PDF text")
+    with patch("docu_tracker.extractor._extract_pdf_with_pymupdf", return_value=""):
+        with patch("docu_tracker.extractor.subprocess.run", return_value=completed) as run:
+            text = extract_text(path)
+
+    assert text == "Fallback PDF text"
+    assert run.call_args.args[0][0] == "pdftotext"
+    assert "-l" in run.call_args.args[0]
 
 
 def test_extract_text_from_docx(sample_docx):

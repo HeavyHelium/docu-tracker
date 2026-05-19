@@ -1,4 +1,5 @@
 import os
+import subprocess
 
 PDF_MAX_PAGES = 4
 DOCX_MAX_CHARS = 5000
@@ -19,6 +20,13 @@ def extract_text(file_path: str) -> str:
 
 
 def _extract_pdf(file_path: str) -> str:
+    text = _extract_pdf_with_pymupdf(file_path)
+    if text.strip():
+        return text
+    return _extract_pdf_with_pdftotext(file_path)
+
+
+def _extract_pdf_with_pymupdf(file_path: str) -> str:
     try:
         import fitz
         doc = fitz.open(file_path)
@@ -30,6 +38,30 @@ def _extract_pdf(file_path: str) -> str:
         return text
     except Exception:
         return ""
+
+
+def _extract_pdf_with_pdftotext(file_path: str) -> str:
+    try:
+        result = subprocess.run(
+            [
+                "pdftotext",
+                "-f",
+                "1",
+                "-l",
+                str(PDF_MAX_PAGES),
+                file_path,
+                "-",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (FileNotFoundError, OSError, subprocess.SubprocessError):
+        return ""
+    if result.returncode != 0:
+        return ""
+    return result.stdout
 
 
 def _extract_docx(file_path: str) -> str:

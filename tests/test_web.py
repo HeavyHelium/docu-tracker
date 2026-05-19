@@ -201,7 +201,7 @@ def test_rescan_route_respects_since_filter(tmp_path, monkeypatch):
         authors="Bob",
         summary="New summary.",
         topics=["Other"],
-        file_modified_at="2026-03-18T00:00:00+00:00",
+        file_modified_at=datetime.now(timezone.utc).isoformat(),
     )
     db.close()
 
