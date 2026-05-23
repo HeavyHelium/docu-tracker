@@ -134,6 +134,8 @@ The web UI provides:
 - direct document opening from the browser UI
 - scan controls for configured paths or a selected path
 - metadata rescan for all documents or a single document
+- interactive topic & document graph view with dynamic filtering, selection highlighting, and freeze physics controls
+
 
 If you want the web UI to work no matter which directory you launch it from, prefer storing your key and default scan paths in `~/.docu-tracker/config.yaml` instead of relying on a repo-local `.env`.
 

@@ -11,6 +11,9 @@ const state = {
     status: "",
     topics: [],
   },
+  viewMode: "list",
+  networkInstance: null,
+  freezePhysics: false,
 };
 
 const STATUS_VISUALS = {
@@ -68,6 +71,10 @@ const els = {
   heroTooltip: document.getElementById("hero-tooltip"),
   activityLog: document.getElementById("activity-log"),
   flash: document.getElementById("flash"),
+  viewToggleBtn: document.getElementById("view-toggle-btn"),
+  graphContainer: document.getElementById("graph-container"),
+  tablePanel: document.querySelector(".table-panel"),
+  freezePhysicsCheckbox: document.getElementById("freeze-physics-checkbox"),
 };
 
 function showFlash(message, kind = "info") {
@@ -443,6 +450,9 @@ function getVisibleDocuments() {
 function renderDocuments() {
   const docs = getVisibleDocuments();
   els.docCount.textContent = `${docs.length} visible`;
+  if (state.viewMode === "graph") {
+    renderGraph();
+  }
   if (!docs.length) {
     els.docsBody.innerHTML = `
       <tr>
@@ -897,6 +907,297 @@ els.topicsList.addEventListener("click", async (event) => {
 });
 
 window.addEventListener("pagehide", closeBrowserSession);
+
+// Graph Mode view toggle action
+els.viewToggleBtn.addEventListener("click", () => {
+  if (state.viewMode === "list") {
+    state.viewMode = "graph";
+    els.viewToggleBtn.textContent = "List View";
+    els.viewToggleBtn.classList.add("active");
+    els.tablePanel.classList.add("graph-mode-active");
+    // Ensure checkbox matches state
+    els.freezePhysicsCheckbox.checked = state.freezePhysics;
+    renderGraph();
+  } else {
+    state.viewMode = "list";
+    els.viewToggleBtn.textContent = "Graph View";
+    els.viewToggleBtn.classList.remove("active");
+    els.tablePanel.classList.remove("graph-mode-active");
+    if (state.networkInstance) {
+      state.networkInstance.destroy();
+      state.networkInstance = null;
+    }
+  }
+});
+
+// Freeze physics checkbox listener
+els.freezePhysicsCheckbox.addEventListener("change", (e) => {
+  state.freezePhysics = e.target.checked;
+  if (state.networkInstance) {
+    state.networkInstance.setOptions({ physics: { enabled: !state.freezePhysics } });
+  }
+});
+
+function renderGraph() {
+  if (!window.vis) {
+    showFlash("Graph visualization library (vis-network) failed to load.", "error");
+    return;
+  }
+
+  const docs = getVisibleDocuments();
+
+  // 1. Construct topic nodes
+  const topicNodes = state.topics.map((t) => {
+    const hue = hashTopic(t.name) % 360;
+    const bg = `hsl(${hue}, 70%, 92%)`;
+    const border = `hsl(${hue}, 52%, 48%)`;
+    const highlightBg = `hsl(${hue}, 80%, 85%)`;
+    const highlightBorder = `hsl(${hue}, 60%, 35%)`;
+    const textColor = `hsl(${hue}, 52%, 24%)`;
+
+    return {
+      id: `topic:${t.name}`,
+      label: t.name,
+      shape: "dot",
+      size: 28,
+      color: {
+        background: bg,
+        border: border,
+        highlight: {
+          background: highlightBg,
+          border: highlightBorder,
+        },
+      },
+      font: {
+        face: "Georgia, serif",
+        size: 14,
+        color: textColor,
+        bold: true,
+      },
+      borderWidth: 2.5,
+      shadow: {
+        enabled: true,
+        color: "rgba(36, 53, 48, 0.08)",
+        size: 4,
+        x: 0,
+        y: 2,
+      },
+      docStatus: null,
+    };
+  });
+
+  // 2. Construct document nodes
+  const docNodes = docs.map((doc) => {
+    const statusColor = STATUS_VISUALS[doc.status]?.color || "#67746f";
+    const shortTitle = doc.title && doc.title.length > 35 
+      ? doc.title.slice(0, 32) + "..." 
+      : (doc.title || `Doc #${doc.id}`);
+    
+    const tooltipText = `Title: ${doc.title || "Untitled"}\nAuthors: ${doc.authors || "Unknown"}\nStatus: ${doc.status}\nSummary: ${doc.summary || ""}`;
+
+    return {
+      id: `doc:${doc.id}`,
+      label: shortTitle,
+      title: tooltipText,
+      shape: "dot",
+      size: 14,
+      color: {
+        background: statusColor,
+        border: "#243530",
+        highlight: {
+          background: statusColor,
+          border: "#0b6e62",
+        },
+      },
+      font: {
+        face: "Avenir Next, Segoe UI, sans-serif",
+        size: 11,
+        color: "#67746f",
+      },
+      borderWidth: 1.5,
+      docStatus: doc.status,
+    };
+  });
+
+  // 3. Construct edges based on topic annotations
+  const edges = [];
+  docs.forEach((doc) => {
+    const topicsToUse = doc.topics && doc.topics.length ? doc.topics : ["Other"];
+    topicsToUse.forEach((topicName) => {
+      if (state.topics.some((t) => t.name === topicName)) {
+        const hue = hashTopic(topicName) % 360;
+        const edgeColor = `hsla(${hue}, 40%, 48%, 0.16)`;
+        const edgeHighlight = `hsl(${hue}, 52%, 40%)`;
+
+        edges.push({
+          from: `doc:${doc.id}`,
+          to: `topic:${topicName}`,
+          color: {
+            color: edgeColor,
+            highlight: edgeHighlight,
+            hover: edgeHighlight,
+          },
+          width: 1.5,
+        });
+      }
+    });
+  });
+
+  const nodes = [...topicNodes, ...docNodes];
+
+  if (state.networkInstance) {
+    state.networkInstance.destroy();
+    state.networkInstance = null;
+  }
+
+  const data = {
+    nodes: new vis.DataSet(nodes),
+    edges: new vis.DataSet(edges),
+  };
+
+  const options = {
+    nodes: {
+      scaling: { min: 10, max: 30 },
+    },
+    edges: {
+      arrows: { to: { enabled: false } },
+      smooth: {
+        type: "continuous",
+        forceDirection: "none",
+      },
+    },
+    physics: {
+      solver: "forceAtlas2Based",
+      forceAtlas2Based: {
+        gravitationalConstant: -40,
+        centralGravity: 0.01,
+        springLength: 100,
+        springConstant: 0.08,
+        damping: 0.4,
+      },
+      stabilization: {
+        iterations: 100,
+        updateInterval: 25,
+      },
+    },
+    interaction: {
+      hover: true,
+      tooltipDelay: 150,
+      selectable: true,
+      selectConnectedEdges: false,
+    },
+  };
+
+  state.networkInstance = new vis.Network(els.graphContainer, data, options);
+
+  state.networkInstance.on("stabilized", () => {
+    if (state.freezePhysics) {
+      state.networkInstance.setOptions({ physics: { enabled: false } });
+    }
+  });
+
+  state.networkInstance.on("click", (params) => {
+    if (params.nodes.length > 0) {
+      const clickedNodeId = params.nodes[0];
+      if (clickedNodeId.startsWith("doc:")) {
+        const docId = parseInt(clickedNodeId.split(":")[1], 10);
+        state.selectedId = docId;
+        renderDetail();
+        highlightNeighbors(clickedNodeId);
+      } else if (clickedNodeId.startsWith("topic:")) {
+        highlightNeighbors(clickedNodeId);
+      }
+    } else {
+      resetGraphHighlight();
+    }
+  });
+
+  state.networkInstance.on("doubleClick", (params) => {
+    if (params.nodes.length > 0) {
+      const clickedNodeId = params.nodes[0];
+      if (clickedNodeId.startsWith("doc:")) {
+        const docId = parseInt(clickedNodeId.split(":")[1], 10);
+        window.open(`/api/documents/${docId}/open`, "_blank", "noopener");
+        showFlash("Document opened.");
+      }
+    }
+  });
+}
+
+function highlightNeighbors(selectedNodeId) {
+  if (!state.networkInstance) return;
+  const allNodes = state.networkInstance.body.data.nodes.get();
+  const connectedNodes = state.networkInstance.getConnectedNodes(selectedNodeId);
+
+  const updatedNodes = allNodes.map((node) => {
+    const isSelected = node.id === selectedNodeId;
+    const isNeighbor = connectedNodes.includes(node.id);
+    const opacity = (isSelected || isNeighbor) ? 1.0 : 0.15;
+    
+    return {
+      id: node.id,
+      color: {
+        background: addOpacityToHex(node.color.background, opacity),
+        border: addOpacityToHex(node.color.border, opacity),
+      },
+      font: {
+        color: addOpacityToHex(node.id.startsWith("topic:") ? `hsl(${hashTopic(node.id.split(":")[1]) % 360}, 52%, 24%)` : "#67746f", opacity),
+      },
+    };
+  });
+
+  state.networkInstance.body.data.nodes.update(updatedNodes);
+}
+
+function resetGraphHighlight() {
+  if (!state.networkInstance) return;
+  const allNodes = state.networkInstance.body.data.nodes.get();
+  const updatedNodes = allNodes.map((node) => {
+    const isTopic = node.id.startsWith("topic:");
+    let baseBg, baseBorder, textColor;
+
+    if (isTopic) {
+      const topicName = node.id.split(":")[1];
+      const hue = hashTopic(topicName) % 360;
+      baseBg = `hsl(${hue}, 70%, 92%)`;
+      baseBorder = `hsl(${hue}, 52%, 48%)`;
+      textColor = `hsl(${hue}, 52%, 24%)`;
+    } else {
+      baseBg = STATUS_VISUALS[node.docStatus]?.color || "#67746f";
+      baseBorder = "#243530";
+      textColor = "#67746f";
+    }
+    
+    return {
+      id: node.id,
+      color: {
+        background: baseBg,
+        border: baseBorder,
+      },
+      font: {
+        color: textColor,
+      },
+    };
+  });
+
+  state.networkInstance.body.data.nodes.update(updatedNodes);
+}
+
+function addOpacityToHex(color, opacity) {
+  if (!color) return color;
+  if (color.startsWith("rgba")) return color;
+  
+  let hex = color.replace("#", "");
+  if (hex.length === 3) {
+    hex = hex.split("").map(c => c + c).join("");
+  }
+  
+  const r = parseInt(hex.substring(0, 2), 16);
+  const g = parseInt(hex.substring(2, 4), 16);
+  const b = parseInt(hex.substring(4, 6), 16);
+  
+  return `rgba(${r}, ${g}, ${b}, ${opacity})`;
+}
 
 Promise.all([openBrowserSession(), loadState()])
   .then(() => {
