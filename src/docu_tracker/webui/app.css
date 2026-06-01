@@ -398,6 +398,7 @@ textarea {
 .stat-card-wide {
   flex-basis: 100%;
   max-width: 314px;
+  cursor: pointer;
 }
 
 .stat-loading {
