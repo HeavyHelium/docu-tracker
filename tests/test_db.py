@@ -5,7 +5,7 @@ from docu_tracker.db import Database
 
 
 def test_initialize_creates_tables(db):
-    """All four tables should exist after init."""
+    """All tables should exist after init."""
     tables = db.execute(
         "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
     ).fetchall()
@@ -14,6 +14,7 @@ def test_initialize_creates_tables(db):
     assert "document_paths" in table_names
     assert "topics" in table_names
     assert "document_topics" in table_names
+    assert "app_metadata" in table_names
 
 
 def test_initialize_seeds_default_topics(db):
@@ -38,6 +39,16 @@ def test_database_creates_parent_directory(tmp_path):
     database = Database(str(db_path))
     database.initialize()
     assert os.path.exists(str(db_path))
+
+
+def test_scan_path_last_scanned_metadata(db):
+    db.set_scan_path_last_scanned_at("/tmp/downloads", "2026-01-01T00:00:00+00:00")
+
+    assert db.get_scan_path_last_scanned_at("/tmp/downloads") == "2026-01-01T00:00:00+00:00"
+
+    db.set_scan_path_last_scanned_at("/tmp/downloads", "2026-01-02T00:00:00+00:00")
+
+    assert db.get_scan_path_last_scanned_at("/tmp/downloads") == "2026-01-02T00:00:00+00:00"
 
 
 def test_add_document(db):

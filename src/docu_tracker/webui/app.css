@@ -395,6 +395,15 @@ textarea {
   font-size: 2rem;
 }
 
+.stat-card-wide {
+  flex-basis: 100%;
+  max-width: 314px;
+}
+
+.stat-loading {
+  color: var(--muted);
+}
+
 .toolbar-layout {
   margin-top: 14px;
   display: grid;

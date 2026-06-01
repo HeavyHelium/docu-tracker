@@ -117,6 +117,48 @@ def _serialize_document(doc):
     }
 
 
+def _configured_scan_paths(config):
+    return [
+        os.path.abspath(os.path.expanduser(item))
+        for item in config.get("scan_paths", [config["downloads_path"]])
+    ]
+
+
+def _timestamp_from_iso(value):
+    if not value:
+        return None
+    return datetime.fromisoformat(value).timestamp()
+
+
+def _waiting_since_last_scan(scan_paths, last_scan_by_path):
+    waiting_count = 0
+    oldest_waiting_ts = None
+    seen_paths = set()
+    for scan_path in scan_paths:
+        last_scan_ts = _timestamp_from_iso(last_scan_by_path.get(scan_path))
+        for file_path in scan_directory(scan_path):
+            absolute_path = os.path.abspath(file_path)
+            if absolute_path in seen_paths:
+                continue
+            seen_paths.add(absolute_path)
+            try:
+                file_mtime = os.path.getmtime(absolute_path)
+            except OSError:
+                continue
+            if last_scan_ts is None or file_mtime > last_scan_ts:
+                waiting_count += 1
+                oldest_waiting_ts = min(oldest_waiting_ts or file_mtime, file_mtime)
+    oldest_waiting_modified_at = None
+    if oldest_waiting_ts is not None:
+        oldest_waiting_modified_at = datetime.fromtimestamp(
+            oldest_waiting_ts, tz=timezone.utc
+        ).isoformat()
+    return {
+        "waiting_to_scan": waiting_count,
+        "oldest_waiting_modified_at": oldest_waiting_modified_at,
+    }
+
+
 def _content_disposition(file_path):
     filename = os.path.basename(file_path)
     suffix = Path(file_path).suffix.lower()
@@ -173,6 +215,8 @@ class DocuTrackerWebApp:
                 )
             if path == "/api/state" and method == "GET":
                 return _json_response(start_response, 200, self.build_state())
+            if path == "/api/stats/waiting-to-scan" and method == "GET":
+                return _json_response(start_response, 200, self.waiting_to_scan_state())
             if path == "/api/scan" and method == "POST":
                 payload = self._parse_json(environ)
                 result = self.scan_documents(
@@ -335,6 +379,16 @@ class DocuTrackerWebApp:
             "statuses": VALID_STATUSES,
         }
 
+    def waiting_to_scan_state(self):
+        config = self._load_config()
+        scan_paths = _configured_scan_paths(config)
+        with database_for_path(self.db_path) as db:
+            last_scan_by_path = {
+                scan_path: db.get_scan_path_last_scanned_at(scan_path)
+                for scan_path in scan_paths
+            }
+        return _waiting_since_last_scan(scan_paths, last_scan_by_path)
+
     def update_document(self, doc_id, payload):
         with database_for_path(self.db_path) as db:
             doc = db.get_document(doc_id)
@@ -453,6 +507,7 @@ class DocuTrackerWebApp:
         return [body]
 
     def scan_documents(self, path=None, since=None):
+        scan_started_at = datetime.now(timezone.utc).isoformat()
         config = self._load_config()
         api_key = config.get("anthropic_api_key")
         if not api_key:
@@ -464,10 +519,7 @@ class DocuTrackerWebApp:
         if path:
             scan_paths = [os.path.abspath(os.path.expanduser(path))]
         else:
-            scan_paths = [
-                os.path.abspath(os.path.expanduser(item))
-                for item in config.get("scan_paths", [config["downloads_path"]])
-            ]
+            scan_paths = _configured_scan_paths(config)
 
         files = []
         for scan_path in scan_paths:
@@ -487,6 +539,9 @@ class DocuTrackerWebApp:
             "items": [],
         }
         if not files:
+            with database_for_path(self.db_path) as db:
+                for scan_path in scan_paths:
+                    db.set_scan_path_last_scanned_at(scan_path, scan_started_at)
             return summary
 
         with database_for_path(self.db_path) as db:
@@ -593,6 +648,10 @@ class DocuTrackerWebApp:
                                 "detail": ", ".join(result["topics"]),
                             }
                         )
+
+        with database_for_path(self.db_path) as db:
+            for scan_path in scan_paths:
+                db.set_scan_path_last_scanned_at(scan_path, scan_started_at)
 
         return summary
 
