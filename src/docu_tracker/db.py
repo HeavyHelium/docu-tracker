@@ -57,6 +57,11 @@ class Database:
                 FOREIGN KEY (document_id) REFERENCES documents(id),
                 FOREIGN KEY (topic_id) REFERENCES topics(id)
             );
+
+            CREATE TABLE IF NOT EXISTS app_metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
         """)
         self.conn.commit()
         self._migrate()
@@ -82,6 +87,26 @@ class Database:
 
     def execute(self, sql, params=()):
         return self.conn.execute(sql, params)
+
+    def get_metadata(self, key):
+        row = self.conn.execute(
+            "SELECT value FROM app_metadata WHERE key = ?", (key,)
+        ).fetchone()
+        return row[0] if row else None
+
+    def set_metadata(self, key, value):
+        self.conn.execute(
+            "INSERT INTO app_metadata (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+        self.conn.commit()
+
+    def get_scan_path_last_scanned_at(self, scan_path):
+        return self.get_metadata(f"last_scan_at:{scan_path}")
+
+    def set_scan_path_last_scanned_at(self, scan_path, scanned_at):
+        self.set_metadata(f"last_scan_at:{scan_path}", scanned_at)
 
     def add_document(self, file_hash, file_path, title, authors, summary,
                      topics, file_modified_at):

@@ -3,6 +3,10 @@ const state = {
   topics: [],
   statuses: [],
   scanPaths: [],
+  waitingToScan: null,
+  waitingToScanLoading: false,
+  oldestWaitingModifiedAt: null,
+  waitingToScanPollId: null,
   selectedId: null,
   activity: [],
   analyticsTimeframe: "8w",
@@ -15,6 +19,8 @@ const state = {
   networkInstance: null,
   freezePhysics: false,
 };
+
+const WAITING_TO_SCAN_POLL_MS = 15 * 60 * 1000;
 
 const STATUS_VISUALS = {
   unread: { label: "Unread", color: "#e6b146" },
@@ -61,6 +67,7 @@ const els = {
   statDocs: document.getElementById("stat-docs"),
   statReading: document.getElementById("stat-reading"),
   statReview: document.getElementById("stat-review"),
+  statWaitingScan: document.getElementById("stat-waiting-scan"),
   heroStatusChart: document.getElementById("hero-status-chart"),
   heroDonutValue: document.getElementById("hero-donut-value"),
   heroStatusLegend: document.getElementById("hero-status-legend"),
@@ -109,6 +116,9 @@ async function loadState(keepSelection = true) {
   state.topics = payload.topics;
   state.statuses = payload.statuses;
   state.scanPaths = payload.scan_paths;
+  state.waitingToScan = null;
+  state.oldestWaitingModifiedAt = null;
+  state.waitingToScanLoading = true;
 
   if (keepSelection && state.selectedId) {
     const stillExists = state.documents.some((doc) => doc.id === state.selectedId);
@@ -120,6 +130,27 @@ async function loadState(keepSelection = true) {
   renderDocuments();
   renderDetail();
   renderTopics();
+  loadWaitingToScan();
+}
+
+async function loadWaitingToScan({ showLoading = true } = {}) {
+  if (showLoading) {
+    state.waitingToScan = null;
+    state.oldestWaitingModifiedAt = null;
+    state.waitingToScanLoading = true;
+    renderStats();
+  }
+
+  try {
+    const payload = await api("/api/stats/waiting-to-scan");
+    state.waitingToScan = payload.waiting_to_scan;
+    state.oldestWaitingModifiedAt = payload.oldest_waiting_modified_at || null;
+    state.waitingToScanLoading = false;
+  } catch (error) {
+    state.waitingToScanLoading = false;
+  }
+
+  renderStats();
 }
 
 async function openBrowserSession() {
@@ -182,6 +213,14 @@ function renderStats() {
   els.statDocs.textContent = String(totalDocs);
   els.statReading.textContent = String(readingDocs);
   els.statReview.textContent = String(reviewDocs);
+  els.statWaitingScan.textContent = state.waitingToScanLoading
+    ? "..."
+    : String(state.waitingToScan ?? 0);
+  els.statWaitingScan.classList.toggle("stat-loading", state.waitingToScanLoading);
+  const waitingTooltip = waitingScanTooltip();
+  els.statWaitingScan.title = waitingTooltip;
+  const waitingCard = els.statWaitingScan.closest(".stat-card");
+  if (waitingCard) waitingCard.title = waitingTooltip;
   renderHeroVisuals();
 }
 
@@ -549,6 +588,37 @@ function renderTopics() {
       </label>
     </div>
   `).join("");
+}
+
+function waitingScanTooltip() {
+  if (state.waitingToScanLoading) {
+    return "Checking configured folders for files changed since the last scan.";
+  }
+  if (!state.waitingToScan) {
+    return "No supported files changed since the last scan.";
+  }
+  if (!state.oldestWaitingModifiedAt) {
+    return state.waitingToScan + " supported files changed since the last scan.";
+  }
+  return "Oldest pending file changed " + formatRelativeAge(state.oldestWaitingModifiedAt) + ".";
+}
+
+function formatRelativeAge(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "at an unknown time";
+  const seconds = Math.max(0, Math.round((Date.now() - date.getTime()) / 1000));
+  const units = [
+    ["day", 86400],
+    ["hour", 3600],
+    ["minute", 60],
+  ];
+  for (const [unit, unitSeconds] of units) {
+    if (seconds >= unitSeconds) {
+      const amount = Math.floor(seconds / unitSeconds);
+      return amount + " " + unit + (amount === 1 ? "" : "s") + " ago";
+    }
+  }
+  return "less than a minute ago";
 }
 
 function formatDate(value) {
@@ -1202,6 +1272,9 @@ function addOpacityToHex(color, opacity) {
 Promise.all([openBrowserSession(), loadState()])
   .then(() => {
     renderActivity();
+    state.waitingToScanPollId = window.setInterval(() => {
+      loadWaitingToScan({ showLoading: false });
+    }, WAITING_TO_SCAN_POLL_MS);
   })
   .catch((error) => {
     showFlash(error.message, "error");

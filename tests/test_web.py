@@ -1,4 +1,5 @@
 import json
+import os
 from datetime import datetime, timezone
 from unittest.mock import patch
 
@@ -110,14 +111,70 @@ def test_topic_crud_routes(tmp_path, monkeypatch):
     assert "Research Notes" not in topic_names
 
 
+def test_waiting_to_scan_route_counts_supported_files(tmp_path, monkeypatch):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    scan_dir = tmp_path / "downloads"
+    scan_dir.mkdir()
+    (config_dir / "config.yaml").write_text(
+        f"scan_paths:\n  - {scan_dir}\n  - {scan_dir}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    app = DocuTrackerWebApp(config_dir=str(config_dir), cwd=str(tmp_path))
+
+    tracked_file = scan_dir / "tracked.pdf"
+    tracked_file.write_bytes(b"tracked-pdf")
+    waiting_file = scan_dir / "waiting.docx"
+    waiting_file.write_bytes(b"waiting-docx")
+    newer_waiting_file = scan_dir / "newer-waiting.pdf"
+    newer_waiting_file.write_bytes(b"newer-waiting-pdf")
+    old_untracked_file = scan_dir / "old-untracked.pdf"
+    old_untracked_file.write_bytes(b"old-untracked-pdf")
+    ignored_file = scan_dir / "notes.txt"
+    ignored_file.write_text("not supported", encoding="utf-8")
+
+    last_scan_at = datetime(2026, 1, 1, 12, tzinfo=timezone.utc)
+    old_ts = datetime(2026, 1, 1, tzinfo=timezone.utc).timestamp()
+    new_ts = datetime(2026, 1, 2, tzinfo=timezone.utc).timestamp()
+    newer_ts = datetime(2026, 1, 3, tzinfo=timezone.utc).timestamp()
+    for file_path in (tracked_file, old_untracked_file):
+        os.utime(file_path, (old_ts, old_ts))
+    os.utime(waiting_file, (new_ts, new_ts))
+    os.utime(newer_waiting_file, (newer_ts, newer_ts))
+
+    db = Database(app.db_path)
+    db.initialize()
+    db.add_document(
+        file_hash="tracked-hash",
+        file_path=str(tracked_file),
+        title="Tracked",
+        authors="",
+        summary="",
+        topics=["Other"],
+        file_modified_at=datetime.now(timezone.utc).isoformat(),
+    )
+    db.set_scan_path_last_scanned_at(str(scan_dir), last_scan_at.isoformat())
+    db.close()
+
+    state_response = call_app(app, "GET", "/api/stats/waiting-to-scan")
+
+    assert state_response["status"].startswith("200")
+    assert state_response["json"]["waiting_to_scan"] == 2
+    assert state_response["json"]["oldest_waiting_modified_at"].startswith("2026-01-02T00:00:00")
+
+
 def test_scan_route_adds_document(tmp_path, monkeypatch):
     config_dir = tmp_path / "config"
     config_dir.mkdir()
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
-    app = DocuTrackerWebApp(config_dir=str(config_dir), cwd=str(tmp_path))
-
     scan_dir = tmp_path / "downloads"
     scan_dir.mkdir()
+    (config_dir / "config.yaml").write_text(
+        f"scan_paths:\n  - {scan_dir}\n",
+        encoding="utf-8",
+    )
+    app = DocuTrackerWebApp(config_dir=str(config_dir), cwd=str(tmp_path))
     file_path = scan_dir / "fresh.pdf"
     file_path.write_bytes(b"pdf-bytes")
 
@@ -141,6 +198,9 @@ def test_scan_route_adds_document(tmp_path, monkeypatch):
 
     state_response = call_app(app, "GET", "/api/state")
     assert state_response["json"]["documents"][0]["title"] == "Fresh Paper"
+
+    stat_response = call_app(app, "GET", "/api/stats/waiting-to-scan")
+    assert stat_response["json"]["waiting_to_scan"] == 0
 
 
 def test_rescan_route_updates_document(tmp_path, monkeypatch):
