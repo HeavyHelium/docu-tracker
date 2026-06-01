@@ -777,6 +777,20 @@ els.heroTimeframe.addEventListener("change", (event) => {
   renderHeroVisuals();
 });
 
+function refreshWaitingToScan() {
+  loadWaitingToScan({ showLoading: true });
+}
+
+const waitingScanCard = els.statWaitingScan.closest(".stat-card");
+if (waitingScanCard) {
+  waitingScanCard.addEventListener("click", refreshWaitingToScan);
+  waitingScanCard.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    refreshWaitingToScan();
+  });
+}
+
 document.addEventListener("click", (event) => {
   if (!els.filterTopic.open) return;
   if (els.filterTopic.contains(event.target)) return;
