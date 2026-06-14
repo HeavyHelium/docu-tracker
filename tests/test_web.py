@@ -81,6 +81,69 @@ def test_state_and_document_update(tmp_path, monkeypatch):
     assert document["topics"] == ["Work"]
 
 
+def test_duplicate_clear_routes(tmp_path, monkeypatch):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    app = DocuTrackerWebApp(config_dir=str(config_dir), cwd=str(tmp_path))
+
+    primary_path = tmp_path / "paper.pdf"
+    duplicate_path = tmp_path / "paper-copy.pdf"
+    primary_path.write_bytes(b"pdf-bytes")
+    duplicate_path.write_bytes(b"pdf-copy-bytes")
+    doc_id = seed_document(app, primary_path)
+
+    db = Database(app.db_path)
+    db.initialize()
+    db.add_duplicate_path("hash-Seed Paper", str(duplicate_path))
+    db.close()
+
+    remove_response = call_app(
+        app,
+        "DELETE",
+        f"/api/documents/{doc_id}/paths",
+        {"path": str(duplicate_path)},
+    )
+
+    assert remove_response["status"].startswith("200")
+    assert remove_response["json"]["removed_count"] == 1
+    assert remove_response["json"]["document"]["paths"] == [str(primary_path)]
+
+    db = Database(app.db_path)
+    db.initialize()
+    db.add_duplicate_path("hash-Seed Paper", str(duplicate_path))
+    db.close()
+
+    doc_clear_response = call_app(app, "POST", f"/api/documents/{doc_id}/duplicates/clear")
+
+    assert doc_clear_response["status"].startswith("200")
+    assert doc_clear_response["json"]["removed_count"] == 1
+    assert doc_clear_response["json"]["document"]["paths"] == [str(primary_path)]
+
+    second_path = tmp_path / "notes.pdf"
+    second_duplicate_path = tmp_path / "notes-copy.pdf"
+    second_path.write_bytes(b"notes")
+    second_duplicate_path.write_bytes(b"notes-copy")
+    second_doc_id = seed_document(app, second_path, title="Second Paper")
+
+    db = Database(app.db_path)
+    db.initialize()
+    db.add_duplicate_path("hash-Seed Paper", str(duplicate_path))
+    db.add_duplicate_path("hash-Second Paper", str(second_duplicate_path))
+    db.close()
+
+    all_clear_response = call_app(app, "POST", "/api/duplicates/clear")
+
+    assert all_clear_response["status"].startswith("200")
+    assert all_clear_response["json"]["document_count"] == 2
+    assert all_clear_response["json"]["removed_count"] == 2
+
+    state_response = call_app(app, "GET", "/api/state")
+    docs_by_id = {doc["id"]: doc for doc in state_response["json"]["documents"]}
+    assert docs_by_id[doc_id]["paths"] == [str(primary_path)]
+    assert docs_by_id[second_doc_id]["paths"] == [str(second_path)]
+
+
 def test_topic_crud_routes(tmp_path, monkeypatch):
     config_dir = tmp_path / "config"
     config_dir.mkdir()

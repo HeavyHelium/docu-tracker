@@ -5,6 +5,7 @@ from click.testing import CliRunner
 from unittest.mock import patch
 import fitz
 from docu_tracker.cli import cli
+from docu_tracker.db import Database
 
 
 @pytest.fixture
@@ -149,6 +150,12 @@ def _seed_documents(runner, tmp_path, monkeypatch):
             runner.invoke(cli, ["scan", "--path", str(downloads)])
 
 
+def _open_test_db():
+    db = Database(os.path.join(os.environ["DOCU_TRACKER_DIR"], "tracker.db"))
+    db.initialize()
+    return db
+
+
 def test_list_shows_all_documents(runner, tmp_path, monkeypatch):
     """List should show all tracked documents."""
     _seed_documents(runner, tmp_path, monkeypatch)
@@ -195,6 +202,41 @@ def test_show_nonexistent(runner):
     """Show for nonexistent ID should error."""
     result = runner.invoke(cli, ["show", "999"])
     assert "not found" in result.output.lower() or result.exit_code != 0
+
+
+def test_clear_duplicates_for_document(runner, tmp_path, monkeypatch):
+    _seed_documents(runner, tmp_path, monkeypatch)
+    db = _open_test_db()
+    doc = db.get_document(1)
+    db.add_duplicate_path(doc["file_hash"], str(tmp_path / "paper-a-copy.pdf"))
+    db.close()
+
+    result = runner.invoke(cli, ["clear-duplicates", "--id", "1", "--yes"])
+
+    assert result.exit_code == 0
+    assert "Cleared 1 duplicate path" in result.output
+    db = _open_test_db()
+    assert len(db.get_document(1)["paths"]) == 1
+    db.close()
+
+
+def test_clear_duplicates_all(runner, tmp_path, monkeypatch):
+    _seed_documents(runner, tmp_path, monkeypatch)
+    db = _open_test_db()
+    first_doc = db.get_document(1)
+    second_doc = db.get_document(2)
+    db.add_duplicate_path(first_doc["file_hash"], str(tmp_path / "paper-a-copy.pdf"))
+    db.add_duplicate_path(second_doc["file_hash"], str(tmp_path / "paper-b-copy.pdf"))
+    db.close()
+
+    result = runner.invoke(cli, ["clear-duplicates", "--yes"])
+
+    assert result.exit_code == 0
+    assert "Cleared 2 duplicate paths across 2 documents" in result.output
+    db = _open_test_db()
+    assert len(db.get_document(1)["paths"]) == 1
+    assert len(db.get_document(2)["paths"]) == 1
+    db.close()
 
 
 def test_mark_read(runner, tmp_path, monkeypatch):

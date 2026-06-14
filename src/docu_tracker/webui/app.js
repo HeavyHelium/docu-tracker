@@ -21,6 +21,10 @@ const state = {
 };
 
 const WAITING_TO_SCAN_POLL_MS = 15 * 60 * 1000;
+const DETAIL_AUTOSAVE_DELAY_MS = 700;
+let detailAutosaveTimer = null;
+let detailAutosaveRequestId = 0;
+let saveButtonResetTimer = null;
 
 const STATUS_VISUALS = {
   unread: { label: "Unread", color: "#e6b146" },
@@ -37,6 +41,7 @@ const browserSessionId = (() => {
 const els = {
   docsBody: document.getElementById("docs-body"),
   docCount: document.getElementById("doc-count"),
+  clearDuplicatesAll: document.getElementById("clear-duplicates-all"),
   filterSearch: document.getElementById("filter-search"),
   filterStatus: document.getElementById("filter-status"),
   filterTopic: document.getElementById("filter-topic"),
@@ -60,6 +65,7 @@ const els = {
   detailPaths: document.getElementById("detail-paths"),
   detailOpen: document.getElementById("detail-open"),
   detailRescan: document.getElementById("detail-rescan"),
+  detailClearDuplicates: document.getElementById("detail-clear-duplicates"),
   topicsList: document.getElementById("topics-list"),
   topicCreate: document.getElementById("topic-create"),
   newTopicName: document.getElementById("new-topic-name"),
@@ -67,6 +73,7 @@ const els = {
   statDocs: document.getElementById("stat-docs"),
   statReading: document.getElementById("stat-reading"),
   statReview: document.getElementById("stat-review"),
+  statDuplicates: document.getElementById("stat-duplicates"),
   statWaitingScan: document.getElementById("stat-waiting-scan"),
   heroStatusChart: document.getElementById("hero-status-chart"),
   heroDonutValue: document.getElementById("hero-donut-value"),
@@ -210,9 +217,15 @@ function renderStats() {
   const totalDocs = state.documents.length;
   const readingDocs = state.documents.filter((doc) => doc.status === "reading").length;
   const reviewDocs = state.documents.filter((doc) => doc.status === "needs_review").length;
+  const duplicatePaths = duplicatePathCount();
   els.statDocs.textContent = String(totalDocs);
   els.statReading.textContent = String(readingDocs);
   els.statReview.textContent = String(reviewDocs);
+  els.statDuplicates.textContent = String(duplicatePaths);
+  const duplicateTooltip = duplicatePaths + " duplicate tracked path" + (duplicatePaths === 1 ? "" : "s");
+  els.statDuplicates.title = duplicateTooltip;
+  const duplicateCard = els.statDuplicates.closest(".stat-card");
+  if (duplicateCard) duplicateCard.title = duplicateTooltip;
   els.statWaitingScan.textContent = state.waitingToScanLoading
     ? "..."
     : String(state.waitingToScan ?? 0);
@@ -486,9 +499,15 @@ function getVisibleDocuments() {
   });
 }
 
+function duplicatePathCount(docs = state.documents) {
+  return docs.reduce((total, doc) => total + Math.max(0, (doc.paths?.length || 0) - 1), 0);
+}
+
 function renderDocuments() {
   const docs = getVisibleDocuments();
-  els.docCount.textContent = `${docs.length} visible`;
+  const totalDuplicatePaths = duplicatePathCount();
+  els.docCount.textContent = docs.length + " visible";
+  els.clearDuplicatesAll.disabled = totalDuplicatePaths === 0;
   if (state.viewMode === "graph") {
     renderGraph();
   }
@@ -541,13 +560,20 @@ function renderDetail() {
     els.detailHeading.textContent = "Select a document";
     els.detailForm.classList.add("hidden");
     els.detailEmpty.classList.remove("hidden");
+    els.saveDocument.textContent = "Save";
     els.saveDocument.disabled = true;
+    els.detailClearDuplicates.classList.add("hidden");
+    els.detailClearDuplicates.disabled = true;
     return;
   }
 
-  els.detailHeading.textContent = `#${doc.id} ${doc.title}`;
+  window.clearTimeout(detailAutosaveTimer);
+  clearSaveButtonResetTimer();
+  detailAutosaveRequestId += 1;
+  els.detailHeading.textContent = "#" + doc.id + " " + doc.title;
   els.detailForm.classList.remove("hidden");
   els.detailEmpty.classList.add("hidden");
+  els.saveDocument.textContent = "Save";
   els.saveDocument.disabled = false;
   els.detailTitle.value = doc.title;
   els.detailAuthors.value = doc.authors;
@@ -556,7 +582,18 @@ function renderDetail() {
   els.detailSummary.value = doc.summary;
   els.detailModified.textContent = formatDateTime(doc.file_modified_at);
   els.detailScanned.textContent = formatDateTime(doc.scanned_at);
-  els.detailPaths.innerHTML = doc.paths.map((path) => `<li>${escapeHtml(path)}</li>`).join("");
+  els.detailPaths.innerHTML = doc.paths.map((path, index) => {
+    const action = index === 0
+      ? "<span class=\"path-badge\">Primary</span>"
+      : "<button type=\"button\" class=\"path-clear-button\" data-clear-path-index=\"" + index + "\">Clear</button>";
+    return "<li class=\"path-item\"><span class=\"path-value\">"
+      + escapeHtml(path)
+      + "</span>"
+      + action
+      + "</li>";
+  }).join("");
+  els.detailClearDuplicates.classList.toggle("hidden", doc.paths.length <= 1);
+  els.detailClearDuplicates.disabled = doc.paths.length <= 1;
   els.detailTopics.innerHTML = state.topics.map((topic) => `
     <label class="topic-option" style="${topicColorStyle(topic.name)}">
       <input type="checkbox" value="${escapeHtml(topic.name)}" ${doc.topics.includes(topic.name) ? "checked" : ""}>
@@ -640,6 +677,91 @@ function truncateAuthors(value) {
 
 function selectedTopics() {
   return Array.from(els.detailTopics.querySelectorAll("input:checked")).map((input) => input.value);
+}
+
+function clearSaveButtonResetTimer() {
+  if (saveButtonResetTimer) {
+    window.clearTimeout(saveButtonResetTimer);
+    saveButtonResetTimer = null;
+  }
+}
+
+function setSaveButtonState(label, disabled = false) {
+  clearSaveButtonResetTimer();
+  els.saveDocument.textContent = label;
+  els.saveDocument.disabled = disabled || !state.selectedId;
+}
+
+function restoreSaveButtonSoon() {
+  clearSaveButtonResetTimer();
+  saveButtonResetTimer = window.setTimeout(() => {
+    if (state.selectedId) setSaveButtonState("Save", false);
+  }, 1200);
+}
+
+function currentDetailPayload() {
+  return {
+    title: els.detailTitle.value.trim(),
+    authors: els.detailAuthors.value.trim(),
+    status: els.detailStatus.value,
+    summary: els.detailSummary.value.trim(),
+    topics: selectedTopics(),
+  };
+}
+
+function applySavedDocument(document) {
+  const index = state.documents.findIndex((item) => item.id === document.id);
+  if (index !== -1) {
+    state.documents[index] = document;
+  }
+  if (document.id === state.selectedId) {
+    els.detailHeading.textContent = "#" + document.id + " " + document.title;
+    els.detailStatus.value = document.status;
+    els.detailStatus.className = "status-select status-" + document.status;
+    els.detailTopics.querySelectorAll("input[type=\"checkbox\"]").forEach((input) => {
+      input.checked = document.topics.includes(input.value);
+    });
+  }
+  renderStats();
+  renderDocuments();
+}
+
+async function saveSelectedDocument({ showSavedFlash = false, requestId = ++detailAutosaveRequestId } = {}) {
+  if (!state.selectedId) return;
+  const docId = state.selectedId;
+  window.clearTimeout(detailAutosaveTimer);
+  detailAutosaveTimer = null;
+  setSaveButtonState("Saving...", true);
+  try {
+    const result = await api("/api/documents/" + docId, {
+      method: "PATCH",
+      body: currentDetailPayload(),
+    });
+    if (requestId !== detailAutosaveRequestId) return;
+    applySavedDocument(result.document);
+    setSaveButtonState("Saved", false);
+    restoreSaveButtonSoon();
+    if (showSavedFlash) showFlash("Document saved.");
+  } catch (error) {
+    if (requestId !== detailAutosaveRequestId) return;
+    setSaveButtonState("Save", false);
+    showFlash(error.message, "error");
+  }
+}
+
+function scheduleDetailAutosave() {
+  if (!state.selectedId) return;
+  const requestId = ++detailAutosaveRequestId;
+  window.clearTimeout(detailAutosaveTimer);
+  detailAutosaveTimer = window.setTimeout(() => {
+    saveSelectedDocument({ requestId });
+  }, DETAIL_AUTOSAVE_DELAY_MS);
+}
+
+async function flushPendingDetailAutosave() {
+  if (!detailAutosaveTimer || !state.selectedId) return;
+  const requestId = ++detailAutosaveRequestId;
+  await saveSelectedDocument({ requestId });
 }
 
 function topicColorStyle(topicName) {
@@ -800,7 +922,11 @@ document.addEventListener("click", (event) => {
 els.docsBody.addEventListener("click", async (event) => {
   const row = event.target.closest("tr[data-doc-id]");
   if (row && !event.target.closest("button, select")) {
-    state.selectedId = Number(row.dataset.docId);
+    const nextDocId = Number(row.dataset.docId);
+    if (nextDocId !== state.selectedId) {
+      await flushPendingDetailAutosave();
+    }
+    state.selectedId = nextDocId;
     renderDocuments();
     renderDetail();
   }
@@ -845,28 +971,23 @@ els.docsBody.addEventListener("change", async (event) => {
   }
 });
 
+els.detailForm.addEventListener("input", (event) => {
+  if (!event.target.matches("#detail-title, #detail-authors, #detail-summary")) return;
+  scheduleDetailAutosave();
+});
+
 els.detailStatus.addEventListener("change", (event) => {
-  event.target.className = `status-select status-${event.target.value}`;
+  event.target.className = "status-select status-" + event.target.value;
+  scheduleDetailAutosave();
+});
+
+els.detailTopics.addEventListener("change", (event) => {
+  if (!event.target.matches("input[type=\"checkbox\"]")) return;
+  scheduleDetailAutosave();
 });
 
 els.saveDocument.addEventListener("click", async () => {
-  if (!state.selectedId) return;
-  try {
-    await api(`/api/documents/${state.selectedId}`, {
-      method: "PATCH",
-      body: {
-        title: els.detailTitle.value.trim(),
-        authors: els.detailAuthors.value.trim(),
-        status: els.detailStatus.value,
-        summary: els.detailSummary.value.trim(),
-        topics: selectedTopics(),
-      },
-    });
-    await loadState();
-    showFlash("Document saved.");
-  } catch (error) {
-    showFlash(error.message, "error");
-  }
+  await saveSelectedDocument({ showSavedFlash: true });
 });
 
 els.detailOpen.addEventListener("click", async () => {
@@ -887,6 +1008,71 @@ els.detailRescan.addEventListener("click", async () => {
     showFlash(error.message, "error");
   } finally {
     els.detailRescan.disabled = false;
+  }
+});
+
+els.detailPaths.addEventListener("click", async (event) => {
+  const clearButton = event.target.closest("button[data-clear-path-index]");
+  if (!clearButton || !state.selectedId) return;
+  const doc = state.documents.find((item) => item.id === state.selectedId);
+  const pathIndex = Number(clearButton.dataset.clearPathIndex);
+  const filePath = doc?.paths?.[pathIndex];
+  if (!filePath) return;
+  if (!window.confirm("Clear this duplicate path record? The file on disk will not be deleted.")) {
+    return;
+  }
+
+  try {
+    clearButton.disabled = true;
+    await api("/api/documents/" + state.selectedId + "/paths", {
+      method: "DELETE",
+      body: { path: filePath },
+    });
+    await loadState();
+    showFlash("Duplicate path cleared.");
+  } catch (error) {
+    showFlash(error.message, "error");
+  } finally {
+    clearButton.disabled = false;
+  }
+});
+
+els.detailClearDuplicates.addEventListener("click", async () => {
+  if (!state.selectedId) return;
+  if (!window.confirm("Clear duplicate path records for this document? Files on disk will not be deleted.")) {
+    return;
+  }
+
+  const resetButton = setButtonBusy(els.detailClearDuplicates, "Clearing...");
+  try {
+    const result = await api("/api/documents/" + state.selectedId + "/duplicates/clear", { method: "POST" });
+    await loadState();
+    showFlash(result.removed_count + " duplicate path" + (result.removed_count === 1 ? "" : "s") + " cleared.");
+  } catch (error) {
+    showFlash(error.message, "error");
+  } finally {
+    resetButton();
+    renderDetail();
+  }
+});
+
+els.clearDuplicatesAll.addEventListener("click", async () => {
+  const totalDuplicatePaths = duplicatePathCount();
+  if (!totalDuplicatePaths) return;
+  if (!window.confirm("Clear all duplicate path records for tracked documents? Files on disk will not be deleted.")) {
+    return;
+  }
+
+  const resetButton = setButtonBusy(els.clearDuplicatesAll, "Clearing...");
+  try {
+    const result = await api("/api/duplicates/clear", { method: "POST" });
+    await loadState();
+    showFlash(result.removed_count + " duplicate path" + (result.removed_count === 1 ? "" : "s") + " cleared.");
+  } catch (error) {
+    showFlash(error.message, "error");
+  } finally {
+    resetButton();
+    renderDocuments();
   }
 });
 

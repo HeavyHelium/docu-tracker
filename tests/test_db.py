@@ -93,6 +93,74 @@ def test_add_duplicate_path(db):
     assert len(doc["paths"]) == 2
 
 
+def test_remove_document_path_keeps_at_least_one_path(db):
+    now = datetime.now(timezone.utc).isoformat()
+    doc_id = db.add_document(
+        file_hash="abc123",
+        file_path="/home/user/Downloads/paper.pdf",
+        title="Test Paper",
+        authors="Alice",
+        summary="Summary.",
+        topics=["Other"],
+        file_modified_at=now,
+    )
+    db.add_duplicate_path("abc123", "/home/user/Documents/paper.pdf")
+
+    assert db.remove_document_path(doc_id, "/home/user/Documents/paper.pdf") == 1
+    assert db.get_document(doc_id)["paths"] == ["/home/user/Downloads/paper.pdf"]
+    with pytest.raises(ValueError, match="only tracked path"):
+        db.remove_document_path(doc_id, "/home/user/Downloads/paper.pdf")
+
+
+def test_clear_document_duplicate_paths(db):
+    now = datetime.now(timezone.utc).isoformat()
+    doc_id = db.add_document(
+        file_hash="abc123",
+        file_path="/home/user/Downloads/paper.pdf",
+        title="Test Paper",
+        authors="Alice",
+        summary="Summary.",
+        topics=["Other"],
+        file_modified_at=now,
+    )
+    db.add_duplicate_path("abc123", "/home/user/Documents/paper.pdf")
+    db.add_duplicate_path("abc123", "/home/user/Archive/paper.pdf")
+
+    assert db.clear_document_duplicate_paths(doc_id) == 2
+    assert db.get_document(doc_id)["paths"] == ["/home/user/Downloads/paper.pdf"]
+    assert db.clear_document_duplicate_paths(doc_id) == 0
+
+
+def test_clear_all_duplicate_paths(db):
+    now = datetime.now(timezone.utc).isoformat()
+    first_id = db.add_document(
+        file_hash="abc123",
+        file_path="/home/user/Downloads/paper.pdf",
+        title="Test Paper",
+        authors="Alice",
+        summary="Summary.",
+        topics=["Other"],
+        file_modified_at=now,
+    )
+    second_id = db.add_document(
+        file_hash="def456",
+        file_path="/home/user/Downloads/notes.pdf",
+        title="Notes",
+        authors="Bob",
+        summary="Summary.",
+        topics=["Other"],
+        file_modified_at=now,
+    )
+    db.add_duplicate_path("abc123", "/home/user/Documents/paper.pdf")
+    db.add_duplicate_path("def456", "/home/user/Documents/notes.pdf")
+
+    result = db.clear_all_duplicate_paths()
+
+    assert result == {"document_count": 2, "removed_count": 2}
+    assert len(db.get_document(first_id)["paths"]) == 1
+    assert len(db.get_document(second_id)["paths"]) == 1
+
+
 def test_get_document_by_hash(db):
     """Should find a document by its file hash."""
     now = datetime.now(timezone.utc).isoformat()

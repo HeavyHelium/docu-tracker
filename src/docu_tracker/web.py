@@ -236,6 +236,9 @@ class DocuTrackerWebApp:
                 payload = self._parse_json(environ)
                 result = self.create_topic(payload)
                 return _json_response(start_response, 201, result)
+            if path == "/api/duplicates/clear" and method == "POST":
+                result = self.clear_all_duplicate_paths()
+                return _json_response(start_response, 200, result)
             if path == "/api/session/open" and method == "POST":
                 payload = self._parse_json(environ)
                 return _json_response(start_response, 200, self.open_session(payload))
@@ -279,6 +282,13 @@ class DocuTrackerWebApp:
             return self.stream_document(doc_id, start_response)
         if len(parts) == 4 and parts[3] == "rescan" and method == "POST":
             result = self.reclassify_documents(doc_id=doc_id)
+            return _json_response(start_response, 200, result)
+        if len(parts) == 4 and parts[3] == "paths" and method == "DELETE":
+            payload = self._parse_json(environ)
+            result = self.remove_document_path(doc_id, payload)
+            return _json_response(start_response, 200, result)
+        if len(parts) == 5 and parts[3] == "duplicates" and parts[4] == "clear" and method == "POST":
+            result = self.clear_document_duplicate_paths(doc_id)
             return _json_response(start_response, 200, result)
 
         raise HTTPError(404, "Not found")
@@ -471,6 +481,44 @@ class DocuTrackerWebApp:
             except ValueError as exc:
                 raise HTTPError(400, str(exc)) from exc
         return {"ok": True}
+
+    def remove_document_path(self, doc_id, payload):
+        file_path = payload.get("path")
+        if not isinstance(file_path, str) or not file_path:
+            raise HTTPError(400, "Document path is required")
+
+        with database_for_path(self.db_path) as db:
+            doc = db.get_document(doc_id)
+            if not doc:
+                raise HTTPError(404, f"Document {doc_id} not found")
+            if file_path not in doc["paths"]:
+                raise HTTPError(404, "Document path not found")
+            try:
+                removed_count = db.remove_document_path(doc_id, file_path)
+            except ValueError as exc:
+                raise HTTPError(400, str(exc)) from exc
+            return {
+                "ok": True,
+                "removed_count": removed_count,
+                "document": _serialize_document(db.get_document(doc_id)),
+            }
+
+    def clear_document_duplicate_paths(self, doc_id):
+        with database_for_path(self.db_path) as db:
+            doc = db.get_document(doc_id)
+            if not doc:
+                raise HTTPError(404, f"Document {doc_id} not found")
+            removed_count = db.clear_document_duplicate_paths(doc_id)
+            return {
+                "ok": True,
+                "removed_count": removed_count,
+                "document": _serialize_document(db.get_document(doc_id)),
+            }
+
+    def clear_all_duplicate_paths(self):
+        with database_for_path(self.db_path) as db:
+            result = db.clear_all_duplicate_paths()
+        return {"ok": True, **result}
 
     def _existing_document_path(self, doc_id):
         with database_for_path(self.db_path) as db:
