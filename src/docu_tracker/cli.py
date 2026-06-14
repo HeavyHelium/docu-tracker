@@ -566,11 +566,97 @@ def untag(doc_id, topic_name):
     db.close()
 
 
+def _delete_duplicate_file(file_path):
+    if not os.path.exists(file_path):
+        return False
+    if not os.path.isfile(file_path):
+        raise ValueError(f"Duplicate path is not a file: {file_path}")
+    os.remove(file_path)
+    return True
+
+
+@cli.command("scan-duplicates")
+@click.option("--path", default=None, help="Directory to scan (default: configured downloads path)")
+@click.option("--since", default=None, help="Only scan files modified within duration (e.g. 7d, 2w, 24h)")
+def scan_duplicates(path, since):
+    """Hash files and record duplicate paths without LLM analysis."""
+    db = get_db()
+    config_dir = os.environ.get("DOCU_TRACKER_DIR", os.path.expanduser("~/.docu-tracker"))
+    config = load_config(
+        config_dir=config_dir,
+        dotenv_path=os.path.join(os.getcwd(), ".env"),
+    )
+
+    scan_paths = [path] if path else config.get("scan_paths", [config["downloads_path"]])
+    files = []
+    for sp in scan_paths:
+        files.extend(scan_directory(sp))
+
+    if since:
+        cutoff_ts = parse_since(since).timestamp()
+        files = [file_path for file_path in files if os.path.getmtime(file_path) >= cutoff_ts]
+
+    if not files:
+        click.echo("No PDF/DOCX files found.")
+        db.close()
+        return
+
+    con = _get_console()
+    seen_untracked = {}
+    recorded_count = 0
+    new_group_count = 0
+    already_tracked_count = 0
+
+    for file_path in files:
+        file_hash = compute_file_hash(file_path)
+        existing = db.get_document_by_hash(file_hash)
+        if existing:
+            if file_path in existing["paths"]:
+                already_tracked_count += 1
+                continue
+            db.add_duplicate_path(file_hash, file_path)
+            recorded_count += 1
+            con.print(f"  [cyan]Duplicate recorded:[/cyan] {os.path.basename(file_path)}")
+            continue
+
+        primary_path = seen_untracked.get(file_hash)
+        if not primary_path:
+            seen_untracked[file_hash] = file_path
+            continue
+
+        file_mtime = os.path.getmtime(primary_path)
+        mtime_iso = datetime.fromtimestamp(file_mtime, tz=timezone.utc).isoformat()
+        doc_id = db.add_document(
+            file_hash=file_hash,
+            file_path=primary_path,
+            title=f"Unknown - {os.path.basename(primary_path)}",
+            authors="",
+            summary="",
+            topics=["Other"],
+            file_modified_at=mtime_iso,
+        )
+        db.update_status(doc_id, "needs_review")
+        db.add_duplicate_path(file_hash, file_path)
+        new_group_count += 1
+        recorded_count += 1
+        con.print(f"  [cyan]Duplicate group tracked:[/cyan] {os.path.basename(primary_path)}")
+
+    con.print(
+        f"\n[bold]Duplicate scan complete:[/bold] "
+        f"[cyan]{recorded_count} duplicate paths recorded[/cyan], "
+        f"[green]{new_group_count} new groups[/green], "
+        f"[dim]{already_tracked_count} already tracked[/dim]"
+    )
+    db.close()
+
+
 @cli.command("clear-duplicates")
 @click.option("--id", "doc_id", type=int, default=None, help="Only clear duplicates for one document ID")
 @click.option("--yes", is_flag=True, help="Skip the confirmation prompt")
-def clear_duplicates(doc_id, yes):
-    """Clear duplicate tracked paths without deleting files from disk."""
+@click.option("--delete-duplicates", "delete_duplicates", is_flag=True, help="Permanently delete duplicate files from disk")
+@click.option("--delete-files", "delete_duplicates", is_flag=True, hidden=True)
+def clear_duplicates(doc_id, yes, delete_duplicates):
+    """Clear duplicate tracked paths, optionally deleting duplicate files from disk."""
     db = get_db()
     try:
         if doc_id is not None:
@@ -582,13 +668,28 @@ def clear_duplicates(doc_id, yes):
             if duplicate_count == 0:
                 click.echo(f"No duplicate paths found for document {doc_id}.")
                 return
-            if not yes and not click.confirm(
-                "Clear duplicate path records for this document? Files on disk will not be deleted."
-            ):
+            confirm_message = (
+                "Permanently delete duplicate files for this document? Primary file is kept. This cannot be undone."
+                if delete_duplicates
+                else "Clear duplicate path records for this document? Files on disk will not be deleted."
+            )
+            if not yes and not click.confirm(confirm_message):
                 return
-            removed_count = db.clear_document_duplicate_paths(doc_id)
+            deleted_count = 0
+            if delete_duplicates:
+                removed_count = 0
+                for file_path in doc["paths"][1:]:
+                    if _delete_duplicate_file(file_path):
+                        deleted_count += 1
+                    removed_count += db.remove_document_path(doc_id, file_path)
+            else:
+                removed_count = db.clear_document_duplicate_paths(doc_id)
             suffix = "" if removed_count == 1 else "s"
-            click.echo(f"Cleared {removed_count} duplicate path{suffix} for {doc['title']}.")
+            if delete_duplicates:
+                file_suffix = "" if deleted_count == 1 else "s"
+                click.echo(f"Deleted {deleted_count} duplicate file{file_suffix} and cleared {removed_count} path{suffix} for {doc['title']}.")
+            else:
+                click.echo(f"Cleared {removed_count} duplicate path{suffix} for {doc['title']}.")
             return
 
         duplicate_docs = [doc for doc in db.list_documents() if len(doc.get("paths", [])) > 1]
@@ -596,16 +697,41 @@ def clear_duplicates(doc_id, yes):
         if duplicate_count == 0:
             click.echo("No duplicate paths found.")
             return
-        if not yes and not click.confirm(
-            f"Clear {duplicate_count} duplicate path records across {len(duplicate_docs)} documents? Files on disk will not be deleted."
-        ):
-            return
-        result = db.clear_all_duplicate_paths()
-        suffix = "" if result["removed_count"] == 1 else "s"
-        click.echo(
-            f"Cleared {result['removed_count']} duplicate path{suffix} "
-            f"across {result['document_count']} documents."
+        confirm_message = (
+            f"Permanently delete {duplicate_count} duplicate files across {len(duplicate_docs)} documents? Primary files are kept. This cannot be undone."
+            if delete_duplicates
+            else f"Clear {duplicate_count} duplicate path records across {len(duplicate_docs)} documents? Files on disk will not be deleted."
         )
+        if not yes and not click.confirm(confirm_message):
+            return
+        if delete_duplicates:
+            removed_count = 0
+            deleted_count = 0
+            for duplicate_doc in duplicate_docs:
+                for file_path in duplicate_doc["paths"][1:]:
+                    if _delete_duplicate_file(file_path):
+                        deleted_count += 1
+                    removed_count += db.remove_document_path(duplicate_doc["id"], file_path)
+            result = {
+                "document_count": len(duplicate_docs),
+                "removed_count": removed_count,
+                "deleted_count": deleted_count,
+            }
+        else:
+            result = db.clear_all_duplicate_paths()
+            result["deleted_count"] = 0
+        suffix = "" if result["removed_count"] == 1 else "s"
+        if delete_duplicates:
+            file_suffix = "" if result["deleted_count"] == 1 else "s"
+            click.echo(
+                f"Deleted {result['deleted_count']} duplicate file{file_suffix} and cleared "
+                f"{result['removed_count']} path{suffix} across {result['document_count']} documents."
+            )
+        else:
+            click.echo(
+                f"Cleared {result['removed_count']} duplicate path{suffix} "
+                f"across {result['document_count']} documents."
+            )
     finally:
         db.close()
 

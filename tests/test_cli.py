@@ -239,6 +239,47 @@ def test_clear_duplicates_all(runner, tmp_path, monkeypatch):
     db.close()
 
 
+def test_clear_duplicates_delete_duplicates(runner, tmp_path, monkeypatch):
+    _seed_documents(runner, tmp_path, monkeypatch)
+    duplicate_path = tmp_path / "paper-a-copy.pdf"
+    duplicate_path.write_bytes(b"duplicate-bytes")
+    db = _open_test_db()
+    doc = db.get_document(1)
+    db.add_duplicate_path(doc["file_hash"], str(duplicate_path))
+    primary_path = doc["paths"][0]
+    db.close()
+
+    result = runner.invoke(cli, ["clear-duplicates", "--id", "1", "--delete-duplicates", "--yes"])
+
+    assert result.exit_code == 0
+    assert "Deleted 1 duplicate file" in result.output
+    assert not duplicate_path.exists()
+    assert os.path.exists(primary_path)
+    db = _open_test_db()
+    assert db.get_document(1)["paths"] == [primary_path]
+    db.close()
+
+
+def test_scan_duplicates_tracks_untracked_duplicate_group(runner, tmp_path):
+    downloads = tmp_path / "dups"
+    downloads.mkdir()
+    first_path = downloads / "first.pdf"
+    second_path = downloads / "second.pdf"
+    first_path.write_bytes(b"same-content")
+    second_path.write_bytes(b"same-content")
+
+    result = runner.invoke(cli, ["scan-duplicates", "--path", str(downloads)])
+
+    assert result.exit_code == 0
+    assert "1 duplicate paths recorded" in result.output
+    db = _open_test_db()
+    docs = db.list_documents()
+    assert len(docs) == 1
+    assert docs[0]["status"] == "needs_review"
+    assert docs[0]["paths"] == [str(first_path), str(second_path)]
+    db.close()
+
+
 def test_mark_read(runner, tmp_path, monkeypatch):
     """mark-read should change status."""
     _seed_documents(runner, tmp_path, monkeypatch)

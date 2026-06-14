@@ -120,6 +120,7 @@
             </label>
             <div class="scan-actions">
               <button id="scan-button" class="button button-primary">Scan Files</button>
+              <button id="duplicate-scan-button" class="button">Scan Duplicates</button>
               <button id="rescan-button" class="button">Rescan Metadata</button>
             </div>
           </div>
@@ -136,6 +137,7 @@
             <div class="section-heading-actions" style="display: flex; align-items: center; gap: 16px;">
               <span id="doc-count" class="pill"></span>
               <button id="clear-duplicates-all" class="button" type="button">Clear Duplicates</button>
+              <button id="hard-delete-duplicates-all" class="button button-danger" type="button">Delete Duplicates</button>
               <label id="freeze-physics-label" class="freeze-physics-label">
                 <input id="freeze-physics-checkbox" type="checkbox">
                 <span>Freeze Physics</span>
@@ -213,6 +215,7 @@
                 <button id="detail-open" type="button" class="button">Open Document</button>
                 <button id="detail-rescan" type="button" class="button">Rescan This Document</button>
                 <button id="detail-clear-duplicates" type="button" class="button hidden">Clear Duplicates</button>
+                <button id="detail-hard-delete-duplicates" type="button" class="button button-danger hidden">Delete Duplicates</button>
               </div>
             </form>
           </section>

@@ -557,6 +557,16 @@ textarea:focus {
   background: linear-gradient(135deg, var(--accent-strong), #063d38);
 }
 
+.button-danger {
+  color: var(--danger);
+}
+
+.button-danger:hover {
+  background: rgba(156, 56, 43, 0.12);
+  border-color: rgba(156, 56, 43, 0.22);
+  color: var(--danger);
+}
+
 .layout {
   display: grid;
   grid-template-columns: minmax(0, 2.45fr) minmax(340px, 0.8fr);
@@ -884,8 +894,15 @@ tbody tr.selected {
   overflow-wrap: anywhere;
 }
 
+.path-actions {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
 .path-badge,
-.path-clear-button {
+.path-clear-button,
+.path-delete-button {
   flex: 0 0 auto;
   border-radius: 999px;
   font-size: 0.78rem;
@@ -897,12 +914,19 @@ tbody tr.selected {
   color: var(--accent-strong);
 }
 
-.path-clear-button {
+.path-clear-button,
+.path-delete-button {
   border: 1px solid rgba(156, 56, 43, 0.14);
   padding: 5px 10px;
   background: rgba(156, 56, 43, 0.09);
   color: var(--danger);
   cursor: pointer;
+}
+
+.path-clear-button {
+  border-color: rgba(50, 71, 67, 0.12);
+  background: rgba(36, 53, 48, 0.06);
+  color: var(--muted);
 }
 
 .detail-actions {
@@ -1086,6 +1110,7 @@ tbody tr.selected {
 }
 
 #clear-duplicates-all,
+#hard-delete-duplicates-all,
 #view-toggle-btn {
   font-size: 0.85rem;
   padding: 6px 14px;
@@ -1098,6 +1123,7 @@ tbody tr.selected {
 }
 
 #clear-duplicates-all:hover,
+#hard-delete-duplicates-all:hover,
 #view-toggle-btn:hover {
   background: var(--accent-soft);
   border-color: var(--accent);
@@ -1105,6 +1131,7 @@ tbody tr.selected {
 }
 
 #clear-duplicates-all:active,
+#hard-delete-duplicates-all:active,
 #view-toggle-btn.active {
   background: var(--accent);
   color: white;
