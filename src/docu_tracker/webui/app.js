@@ -42,6 +42,7 @@ const els = {
   docsBody: document.getElementById("docs-body"),
   docCount: document.getElementById("doc-count"),
   clearDuplicatesAll: document.getElementById("clear-duplicates-all"),
+  hardDeleteDuplicatesAll: document.getElementById("hard-delete-duplicates-all"),
   filterSearch: document.getElementById("filter-search"),
   filterStatus: document.getElementById("filter-status"),
   filterTopic: document.getElementById("filter-topic"),
@@ -51,6 +52,7 @@ const els = {
   scanSince: document.getElementById("scan-since"),
   scanButton: document.getElementById("scan-button"),
   rescanButton: document.getElementById("rescan-button"),
+  duplicateScanButton: document.getElementById("duplicate-scan-button"),
   detailHeading: document.getElementById("detail-heading"),
   detailEmpty: document.getElementById("detail-empty"),
   detailForm: document.getElementById("detail-form"),
@@ -66,6 +68,7 @@ const els = {
   detailOpen: document.getElementById("detail-open"),
   detailRescan: document.getElementById("detail-rescan"),
   detailClearDuplicates: document.getElementById("detail-clear-duplicates"),
+  detailHardDeleteDuplicates: document.getElementById("detail-hard-delete-duplicates"),
   topicsList: document.getElementById("topics-list"),
   topicCreate: document.getElementById("topic-create"),
   newTopicName: document.getElementById("new-topic-name"),
@@ -508,6 +511,7 @@ function renderDocuments() {
   const totalDuplicatePaths = duplicatePathCount();
   els.docCount.textContent = docs.length + " visible";
   els.clearDuplicatesAll.disabled = totalDuplicatePaths === 0;
+  els.hardDeleteDuplicatesAll.disabled = totalDuplicatePaths === 0;
   if (state.viewMode === "graph") {
     renderGraph();
   }
@@ -564,6 +568,8 @@ function renderDetail() {
     els.saveDocument.disabled = true;
     els.detailClearDuplicates.classList.add("hidden");
     els.detailClearDuplicates.disabled = true;
+    els.detailHardDeleteDuplicates.classList.add("hidden");
+    els.detailHardDeleteDuplicates.disabled = true;
     return;
   }
 
@@ -585,7 +591,7 @@ function renderDetail() {
   els.detailPaths.innerHTML = doc.paths.map((path, index) => {
     const action = index === 0
       ? "<span class=\"path-badge\">Primary</span>"
-      : "<button type=\"button\" class=\"path-clear-button\" data-clear-path-index=\"" + index + "\">Clear</button>";
+      : "<div class=\"path-actions\"><button type=\"button\" class=\"path-clear-button\" data-clear-path-index=\"" + index + "\">Clear</button><button type=\"button\" class=\"path-delete-button\" data-delete-path-index=\"" + index + "\">Delete Duplicate</button></div>";
     return "<li class=\"path-item\"><span class=\"path-value\">"
       + escapeHtml(path)
       + "</span>"
@@ -594,6 +600,8 @@ function renderDetail() {
   }).join("");
   els.detailClearDuplicates.classList.toggle("hidden", doc.paths.length <= 1);
   els.detailClearDuplicates.disabled = doc.paths.length <= 1;
+  els.detailHardDeleteDuplicates.classList.toggle("hidden", doc.paths.length <= 1);
+  els.detailHardDeleteDuplicates.disabled = doc.paths.length <= 1;
   els.detailTopics.innerHTML = state.topics.map((topic) => `
     <label class="topic-option" style="${topicColorStyle(topic.name)}">
       <input type="checkbox" value="${escapeHtml(topic.name)}" ${doc.topics.includes(topic.name) ? "checked" : ""}>
@@ -781,6 +789,9 @@ function hashTopic(value) {
 }
 
 function activitySummary(result) {
+  if (result.mode === "duplicate_scan") {
+    return result.recorded_count + " duplicate paths, " + result.new_group_count + " new groups";
+  }
   if (result.mode === "scan") {
     return `${result.new_count} new, ${result.duplicate_count} duplicates, ${result.failed_count} failed`;
   }
@@ -1013,27 +1024,33 @@ els.detailRescan.addEventListener("click", async () => {
 
 els.detailPaths.addEventListener("click", async (event) => {
   const clearButton = event.target.closest("button[data-clear-path-index]");
-  if (!clearButton || !state.selectedId) return;
+  const deleteButton = event.target.closest("button[data-delete-path-index]");
+  const actionButton = clearButton || deleteButton;
+  if (!actionButton || !state.selectedId) return;
   const doc = state.documents.find((item) => item.id === state.selectedId);
-  const pathIndex = Number(clearButton.dataset.clearPathIndex);
+  const pathIndex = Number(clearButton ? clearButton.dataset.clearPathIndex : deleteButton.dataset.deletePathIndex);
   const filePath = doc?.paths?.[pathIndex];
   if (!filePath) return;
-  if (!window.confirm("Clear this duplicate path record? The file on disk will not be deleted.")) {
-    return;
-  }
+  const hardDelete = Boolean(deleteButton);
+  const message = hardDelete
+    ? "Permanently delete this duplicate file from disk and clear its tracker record? This cannot be undone."
+    : "Clear this duplicate path record? The file on disk will not be deleted.";
+  if (!window.confirm(message)) return;
 
   try {
-    clearButton.disabled = true;
-    await api("/api/documents/" + state.selectedId + "/paths", {
+    actionButton.disabled = true;
+    const result = await api("/api/documents/" + state.selectedId + "/paths", {
       method: "DELETE",
-      body: { path: filePath },
+      body: { path: filePath, hard_delete: hardDelete },
     });
     await loadState();
-    showFlash("Duplicate path cleared.");
+    showFlash(hardDelete
+      ? result.deleted_count + " duplicate file" + (result.deleted_count === 1 ? "" : "s") + " deleted."
+      : "Duplicate path cleared.");
   } catch (error) {
     showFlash(error.message, "error");
   } finally {
-    clearButton.disabled = false;
+    actionButton.disabled = false;
   }
 });
 
@@ -1048,6 +1065,28 @@ els.detailClearDuplicates.addEventListener("click", async () => {
     const result = await api("/api/documents/" + state.selectedId + "/duplicates/clear", { method: "POST" });
     await loadState();
     showFlash(result.removed_count + " duplicate path" + (result.removed_count === 1 ? "" : "s") + " cleared.");
+  } catch (error) {
+    showFlash(error.message, "error");
+  } finally {
+    resetButton();
+    renderDetail();
+  }
+});
+
+els.detailHardDeleteDuplicates.addEventListener("click", async () => {
+  if (!state.selectedId) return;
+  if (!window.confirm("Permanently delete duplicate files for this document and clear their tracker records? Primary file is kept. This cannot be undone.")) {
+    return;
+  }
+
+  const resetButton = setButtonBusy(els.detailHardDeleteDuplicates, "Deleting...");
+  try {
+    const result = await api("/api/documents/" + state.selectedId + "/duplicates/clear", {
+      method: "POST",
+      body: { hard_delete: true },
+    });
+    await loadState();
+    showFlash(result.deleted_count + " duplicate file" + (result.deleted_count === 1 ? "" : "s") + " deleted.");
   } catch (error) {
     showFlash(error.message, "error");
   } finally {
@@ -1076,6 +1115,29 @@ els.clearDuplicatesAll.addEventListener("click", async () => {
   }
 });
 
+els.hardDeleteDuplicatesAll.addEventListener("click", async () => {
+  const totalDuplicatePaths = duplicatePathCount();
+  if (!totalDuplicatePaths) return;
+  if (!window.confirm("Permanently delete all duplicate files from disk and clear their tracker records? Primary files are kept. This cannot be undone.")) {
+    return;
+  }
+
+  const resetButton = setButtonBusy(els.hardDeleteDuplicatesAll, "Deleting...");
+  try {
+    const result = await api("/api/duplicates/clear", {
+      method: "POST",
+      body: { hard_delete: true },
+    });
+    await loadState();
+    showFlash(result.deleted_count + " duplicate file" + (result.deleted_count === 1 ? "" : "s") + " deleted.");
+  } catch (error) {
+    showFlash(error.message, "error");
+  } finally {
+    resetButton();
+    renderDocuments();
+  }
+});
+
 els.scanButton.addEventListener("click", async () => {
   const resetButton = setButtonBusy(els.scanButton, "Scanning...");
   try {
@@ -1090,6 +1152,27 @@ els.scanButton.addEventListener("click", async () => {
     prependActivity("Scan completed", result);
     await loadState(false);
     showFlash("Scan finished.");
+  } catch (error) {
+    showFlash(error.message, "error");
+  } finally {
+    resetButton();
+  }
+});
+
+els.duplicateScanButton.addEventListener("click", async () => {
+  const resetButton = setButtonBusy(els.duplicateScanButton, "Scanning...");
+  try {
+    showFlash("Duplicate scan started.", "info");
+    const result = await api("/api/duplicates/scan", {
+      method: "POST",
+      body: {
+        path: els.scanPath.value || null,
+        since: els.scanSince.value.trim() || null,
+      },
+    });
+    prependActivity("Duplicate scan completed", result);
+    await loadState(false);
+    showFlash(result.recorded_count + " duplicate path" + (result.recorded_count === 1 ? "" : "s") + " recorded.");
   } catch (error) {
     showFlash(error.message, "error");
   } finally {

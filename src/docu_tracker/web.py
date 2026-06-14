@@ -237,7 +237,17 @@ class DocuTrackerWebApp:
                 result = self.create_topic(payload)
                 return _json_response(start_response, 201, result)
             if path == "/api/duplicates/clear" and method == "POST":
-                result = self.clear_all_duplicate_paths()
+                payload = self._parse_json(environ)
+                result = self.clear_all_duplicate_paths(
+                    hard_delete=bool(payload.get("hard_delete"))
+                )
+                return _json_response(start_response, 200, result)
+            if path == "/api/duplicates/scan" and method == "POST":
+                payload = self._parse_json(environ)
+                result = self.scan_duplicate_files(
+                    path=payload.get("path"),
+                    since=payload.get("since"),
+                )
                 return _json_response(start_response, 200, result)
             if path == "/api/session/open" and method == "POST":
                 payload = self._parse_json(environ)
@@ -288,7 +298,11 @@ class DocuTrackerWebApp:
             result = self.remove_document_path(doc_id, payload)
             return _json_response(start_response, 200, result)
         if len(parts) == 5 and parts[3] == "duplicates" and parts[4] == "clear" and method == "POST":
-            result = self.clear_document_duplicate_paths(doc_id)
+            payload = self._parse_json(environ)
+            result = self.clear_document_duplicate_paths(
+                doc_id,
+                hard_delete=bool(payload.get("hard_delete")),
+            )
             return _json_response(start_response, 200, result)
 
         raise HTTPError(404, "Not found")
@@ -482,17 +496,34 @@ class DocuTrackerWebApp:
                 raise HTTPError(400, str(exc)) from exc
         return {"ok": True}
 
+    def _delete_duplicate_file(self, file_path):
+        if not os.path.exists(file_path):
+            return False
+        if not os.path.isfile(file_path):
+            raise HTTPError(400, f"Duplicate path is not a file: {file_path}")
+        try:
+            os.remove(file_path)
+        except OSError as exc:
+            raise HTTPError(400, f"Could not delete duplicate file: {exc}") from exc
+        return True
+
     def remove_document_path(self, doc_id, payload):
         file_path = payload.get("path")
+        hard_delete = bool(payload.get("hard_delete"))
         if not isinstance(file_path, str) or not file_path:
             raise HTTPError(400, "Document path is required")
 
+        deleted_count = 0
         with database_for_path(self.db_path) as db:
             doc = db.get_document(doc_id)
             if not doc:
                 raise HTTPError(404, f"Document {doc_id} not found")
             if file_path not in doc["paths"]:
                 raise HTTPError(404, "Document path not found")
+            if hard_delete and file_path == doc["paths"][0]:
+                raise HTTPError(400, "Cannot hard-delete the primary tracked file")
+            if hard_delete and self._delete_duplicate_file(file_path):
+                deleted_count = 1
             try:
                 removed_count = db.remove_document_path(doc_id, file_path)
             except ValueError as exc:
@@ -500,25 +531,58 @@ class DocuTrackerWebApp:
             return {
                 "ok": True,
                 "removed_count": removed_count,
+                "deleted_count": deleted_count,
                 "document": _serialize_document(db.get_document(doc_id)),
             }
 
-    def clear_document_duplicate_paths(self, doc_id):
+    def clear_document_duplicate_paths(self, doc_id, hard_delete=False):
         with database_for_path(self.db_path) as db:
             doc = db.get_document(doc_id)
             if not doc:
                 raise HTTPError(404, f"Document {doc_id} not found")
-            removed_count = db.clear_document_duplicate_paths(doc_id)
+            duplicate_paths = doc["paths"][1:]
+            if not hard_delete:
+                removed_count = db.clear_document_duplicate_paths(doc_id)
+                return {
+                    "ok": True,
+                    "removed_count": removed_count,
+                    "deleted_count": 0,
+                    "document": _serialize_document(db.get_document(doc_id)),
+                }
+
+            removed_count = 0
+            deleted_count = 0
+            for file_path in duplicate_paths:
+                if self._delete_duplicate_file(file_path):
+                    deleted_count += 1
+                removed_count += db.remove_document_path(doc_id, file_path)
             return {
                 "ok": True,
                 "removed_count": removed_count,
+                "deleted_count": deleted_count,
                 "document": _serialize_document(db.get_document(doc_id)),
             }
 
-    def clear_all_duplicate_paths(self):
+    def clear_all_duplicate_paths(self, hard_delete=False):
         with database_for_path(self.db_path) as db:
-            result = db.clear_all_duplicate_paths()
-        return {"ok": True, **result}
+            if not hard_delete:
+                result = db.clear_all_duplicate_paths()
+                return {"ok": True, "deleted_count": 0, **result}
+
+            duplicate_docs = [doc for doc in db.list_documents() if len(doc.get("paths", [])) > 1]
+            removed_count = 0
+            deleted_count = 0
+            for doc in duplicate_docs:
+                for file_path in doc["paths"][1:]:
+                    if self._delete_duplicate_file(file_path):
+                        deleted_count += 1
+                    removed_count += db.remove_document_path(doc["id"], file_path)
+            return {
+                "ok": True,
+                "document_count": len(duplicate_docs),
+                "removed_count": removed_count,
+                "deleted_count": deleted_count,
+            }
 
     def _existing_document_path(self, doc_id):
         with database_for_path(self.db_path) as db:
@@ -553,6 +617,79 @@ class DocuTrackerWebApp:
             ],
         )
         return [body]
+
+    def scan_duplicate_files(self, path=None, since=None):
+        config = self._load_config()
+        if path:
+            scan_paths = [os.path.abspath(os.path.expanduser(path))]
+        else:
+            scan_paths = _configured_scan_paths(config)
+
+        files = []
+        for scan_path in scan_paths:
+            files.extend(scan_directory(scan_path))
+
+        if since:
+            cutoff_ts = parse_since(since).timestamp()
+            files = [file_path for file_path in files if os.path.getmtime(file_path) >= cutoff_ts]
+
+        summary = {
+            "mode": "duplicate_scan",
+            "paths": scan_paths,
+            "files_seen": len(files),
+            "recorded_count": 0,
+            "new_group_count": 0,
+            "already_tracked_count": 0,
+            "items": [],
+        }
+
+        seen_untracked = {}
+        with database_for_path(self.db_path) as db:
+            for file_path in files:
+                file_hash = compute_file_hash(file_path)
+                existing = db.get_document_by_hash(file_hash)
+                if existing:
+                    if file_path in existing["paths"]:
+                        summary["already_tracked_count"] += 1
+                        continue
+                    db.add_duplicate_path(file_hash, file_path)
+                    summary["recorded_count"] += 1
+                    summary["items"].append({
+                        "kind": "duplicate",
+                        "title": existing["title"],
+                        "path": file_path,
+                        "detail": "Duplicate location recorded",
+                    })
+                    continue
+
+                primary_path = seen_untracked.get(file_hash)
+                if not primary_path:
+                    seen_untracked[file_hash] = file_path
+                    continue
+
+                file_mtime = os.path.getmtime(primary_path)
+                mtime_iso = datetime.fromtimestamp(file_mtime, tz=timezone.utc).isoformat()
+                doc_id = db.add_document(
+                    file_hash=file_hash,
+                    file_path=primary_path,
+                    title=f"Unknown - {os.path.basename(primary_path)}",
+                    authors="",
+                    summary="",
+                    topics=["Other"],
+                    file_modified_at=mtime_iso,
+                )
+                db.update_status(doc_id, "needs_review")
+                db.add_duplicate_path(file_hash, file_path)
+                summary["new_group_count"] += 1
+                summary["recorded_count"] += 1
+                summary["items"].append({
+                    "kind": "duplicate_group",
+                    "title": os.path.basename(primary_path),
+                    "path": file_path,
+                    "detail": "New duplicate group tracked for review",
+                })
+
+        return summary
 
     def scan_documents(self, path=None, since=None):
         scan_started_at = datetime.now(timezone.utc).isoformat()

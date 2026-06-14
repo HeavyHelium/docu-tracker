@@ -144,6 +144,75 @@ def test_duplicate_clear_routes(tmp_path, monkeypatch):
     assert docs_by_id[second_doc_id]["paths"] == [str(second_path)]
 
 
+def test_hard_delete_duplicate_path_route_deletes_file(tmp_path, monkeypatch):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    app = DocuTrackerWebApp(config_dir=str(config_dir), cwd=str(tmp_path))
+
+    primary_path = tmp_path / "paper.pdf"
+    duplicate_path = tmp_path / "paper-copy.pdf"
+    primary_path.write_bytes(b"pdf-bytes")
+    duplicate_path.write_bytes(b"pdf-bytes")
+    doc_id = seed_document(app, primary_path)
+
+    db = Database(app.db_path)
+    db.initialize()
+    db.add_duplicate_path("hash-Seed Paper", str(duplicate_path))
+    db.close()
+
+    response = call_app(
+        app,
+        "DELETE",
+        f"/api/documents/{doc_id}/paths",
+        {"path": str(duplicate_path), "hard_delete": True},
+    )
+
+    assert response["status"].startswith("200")
+    assert response["json"]["deleted_count"] == 1
+    assert primary_path.exists()
+    assert not duplicate_path.exists()
+    assert response["json"]["document"]["paths"] == [str(primary_path)]
+
+    primary_delete_response = call_app(
+        app,
+        "DELETE",
+        f"/api/documents/{doc_id}/paths",
+        {"path": str(primary_path), "hard_delete": True},
+    )
+    assert primary_delete_response["status"].startswith("400")
+    assert primary_path.exists()
+
+
+def test_duplicate_scan_route_tracks_untracked_duplicate_group(tmp_path, monkeypatch):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    scan_dir = tmp_path / "downloads"
+    scan_dir.mkdir()
+    (config_dir / "config.yaml").write_text(
+        f"scan_paths:\n  - {scan_dir}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    app = DocuTrackerWebApp(config_dir=str(config_dir), cwd=str(tmp_path))
+
+    first_path = scan_dir / "a.pdf"
+    second_path = scan_dir / "b.pdf"
+    first_path.write_bytes(b"same-pdf")
+    second_path.write_bytes(b"same-pdf")
+
+    response = call_app(app, "POST", "/api/duplicates/scan")
+
+    assert response["status"].startswith("200")
+    assert response["json"]["recorded_count"] == 1
+    assert response["json"]["new_group_count"] == 1
+
+    state_response = call_app(app, "GET", "/api/state")
+    document = state_response["json"]["documents"][0]
+    assert document["status"] == "needs_review"
+    assert document["paths"] == [str(first_path), str(second_path)]
+
+
 def test_topic_crud_routes(tmp_path, monkeypatch):
     config_dir = tmp_path / "config"
     config_dir.mkdir()
