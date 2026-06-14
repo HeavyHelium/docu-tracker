@@ -134,15 +134,20 @@
               <p class="section-kicker">Library</p>
               <h2>Document Queue</h2>
             </div>
-            <div class="section-heading-actions" style="display: flex; align-items: center; gap: 16px;">
-              <span id="doc-count" class="pill"></span>
-              <button id="clear-duplicates-all" class="button" type="button">Clear Duplicates</button>
-              <button id="hard-delete-duplicates-all" class="button button-danger" type="button">Delete Duplicates</button>
-              <label id="freeze-physics-label" class="freeze-physics-label">
-                <input id="freeze-physics-checkbox" type="checkbox">
-                <span>Freeze Physics</span>
-              </label>
-              <button id="view-toggle-btn" class="button" type="button">Graph View</button>
+            <div class="section-heading-actions library-actions">
+              <div class="library-maintenance-actions">
+                <button id="clear-duplicates-all" class="button" type="button">Clear Duplicates</button>
+                <button id="hard-delete-duplicates-all" class="button button-danger" type="button">Delete Duplicates</button>
+                <button id="prune-missing-files" class="button" type="button">Prune Missing</button>
+              </div>
+              <div class="library-view-actions">
+                <span id="doc-count" class="pill"></span>
+                <label id="freeze-physics-label" class="freeze-physics-label">
+                  <input id="freeze-physics-checkbox" type="checkbox">
+                  <span>Freeze Physics</span>
+                </label>
+                <button id="view-toggle-btn" class="button" type="button">Graph View</button>
+              </div>
             </div>
           </div>
           <div class="table-wrap">

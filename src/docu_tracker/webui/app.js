@@ -43,6 +43,7 @@ const els = {
   docCount: document.getElementById("doc-count"),
   clearDuplicatesAll: document.getElementById("clear-duplicates-all"),
   hardDeleteDuplicatesAll: document.getElementById("hard-delete-duplicates-all"),
+  pruneMissingFiles: document.getElementById("prune-missing-files"),
   filterSearch: document.getElementById("filter-search"),
   filterStatus: document.getElementById("filter-status"),
   filterTopic: document.getElementById("filter-topic"),
@@ -1130,6 +1131,27 @@ els.hardDeleteDuplicatesAll.addEventListener("click", async () => {
     });
     await loadState();
     showFlash(result.deleted_count + " duplicate file" + (result.deleted_count === 1 ? "" : "s") + " deleted.");
+  } catch (error) {
+    showFlash(error.message, "error");
+  } finally {
+    resetButton();
+    renderDocuments();
+  }
+});
+
+els.pruneMissingFiles.addEventListener("click", async () => {
+  if (!window.confirm("Remove tracker records for missing files? Documents with no remaining paths will be removed.")) {
+    return;
+  }
+
+  const resetButton = setButtonBusy(els.pruneMissingFiles, "Pruning...");
+  try {
+    const result = await api("/api/missing-files/prune", { method: "POST" });
+    await loadState();
+    showFlash(
+      "Pruned " + result.removed_path_count + " missing path" + (result.removed_path_count === 1 ? "" : "s")
+      + " and removed " + result.removed_document_count + " document" + (result.removed_document_count === 1 ? "" : "s") + "."
+    );
   } catch (error) {
     showFlash(error.message, "error");
   } finally {

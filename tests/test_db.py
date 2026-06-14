@@ -161,6 +161,41 @@ def test_clear_all_duplicate_paths(db):
     assert len(db.get_document(second_id)["paths"]) == 1
 
 
+def test_prune_missing_file_records_removes_paths_and_empty_documents(db, tmp_path):
+    existing_path = tmp_path / "existing.pdf"
+    missing_path = tmp_path / "missing.pdf"
+    empty_missing_path = tmp_path / "empty-missing.pdf"
+    existing_path.write_bytes(b"existing")
+    empty_missing_path.write_bytes(b"gone")
+    empty_missing_path.unlink()
+    now = datetime.now(timezone.utc).isoformat()
+    doc_id = db.add_document(
+        file_hash="abc123",
+        file_path=str(existing_path),
+        title="Has Existing Path",
+        authors="Alice",
+        summary="Summary.",
+        topics=["Other"],
+        file_modified_at=now,
+    )
+    db.add_duplicate_path("abc123", str(missing_path))
+    empty_doc_id = db.add_document(
+        file_hash="def456",
+        file_path=str(empty_missing_path),
+        title="All Missing",
+        authors="Bob",
+        summary="Summary.",
+        topics=["Work"],
+        file_modified_at=now,
+    )
+
+    result = db.prune_missing_file_records()
+
+    assert result == {"removed_path_count": 2, "removed_document_count": 1}
+    assert db.get_document(doc_id)["paths"] == [str(existing_path)]
+    assert db.get_document(empty_doc_id) is None
+
+
 def test_get_document_by_hash(db):
     """Should find a document by its file hash."""
     now = datetime.now(timezone.utc).isoformat()
