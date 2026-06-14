@@ -148,6 +148,56 @@ class Database:
             return row[0]
         return None
 
+    def remove_document_path(self, doc_id, file_path):
+        path_count = self.conn.execute(
+            "SELECT COUNT(*) FROM document_paths WHERE document_id = ?",
+            (doc_id,),
+        ).fetchone()[0]
+        if path_count <= 1:
+            raise ValueError("Cannot remove the only tracked path for a document")
+
+        row = self.conn.execute(
+            "SELECT id FROM document_paths WHERE document_id = ? AND file_path = ? "
+            "ORDER BY added_at, id LIMIT 1",
+            (doc_id, file_path),
+        ).fetchone()
+        if not row:
+            return 0
+
+        self.conn.execute("DELETE FROM document_paths WHERE id = ?", (row[0],))
+        self.conn.commit()
+        return 1
+
+    def clear_document_duplicate_paths(self, doc_id):
+        rows = self.conn.execute(
+            "SELECT id FROM document_paths WHERE document_id = ? ORDER BY added_at, id",
+            (doc_id,),
+        ).fetchall()
+        if len(rows) <= 1:
+            return 0
+
+        duplicate_ids = [row[0] for row in rows[1:]]
+        placeholders = ",".join("?" for _ in duplicate_ids)
+        self.conn.execute(
+            f"DELETE FROM document_paths WHERE id IN ({placeholders})",
+            duplicate_ids,
+        )
+        self.conn.commit()
+        return len(duplicate_ids)
+
+    def clear_all_duplicate_paths(self):
+        doc_rows = self.conn.execute(
+            "SELECT document_id FROM document_paths "
+            "GROUP BY document_id HAVING COUNT(*) > 1"
+        ).fetchall()
+        removed_count = 0
+        for row in doc_rows:
+            removed_count += self.clear_document_duplicate_paths(row[0])
+        return {
+            "document_count": len(doc_rows),
+            "removed_count": removed_count,
+        }
+
     def get_document(self, doc_id):
         row = self.conn.execute(
             "SELECT id, file_hash, title, authors, summary, status, scanned_at, file_modified_at "
@@ -158,7 +208,7 @@ class Database:
             return None
         paths = [
             r[0] for r in self.conn.execute(
-                "SELECT file_path FROM document_paths WHERE document_id = ? ORDER BY added_at",
+                "SELECT file_path FROM document_paths WHERE document_id = ? ORDER BY added_at, id",
                 (row[0],),
             ).fetchall()
         ]

@@ -566,6 +566,50 @@ def untag(doc_id, topic_name):
     db.close()
 
 
+@cli.command("clear-duplicates")
+@click.option("--id", "doc_id", type=int, default=None, help="Only clear duplicates for one document ID")
+@click.option("--yes", is_flag=True, help="Skip the confirmation prompt")
+def clear_duplicates(doc_id, yes):
+    """Clear duplicate tracked paths without deleting files from disk."""
+    db = get_db()
+    try:
+        if doc_id is not None:
+            doc = db.get_document(doc_id)
+            if not doc:
+                click.echo(f"Document {doc_id} not found.", err=True)
+                sys.exit(1)
+            duplicate_count = max(0, len(doc.get("paths", [])) - 1)
+            if duplicate_count == 0:
+                click.echo(f"No duplicate paths found for document {doc_id}.")
+                return
+            if not yes and not click.confirm(
+                "Clear duplicate path records for this document? Files on disk will not be deleted."
+            ):
+                return
+            removed_count = db.clear_document_duplicate_paths(doc_id)
+            suffix = "" if removed_count == 1 else "s"
+            click.echo(f"Cleared {removed_count} duplicate path{suffix} for {doc['title']}.")
+            return
+
+        duplicate_docs = [doc for doc in db.list_documents() if len(doc.get("paths", [])) > 1]
+        duplicate_count = sum(len(doc.get("paths", [])) - 1 for doc in duplicate_docs)
+        if duplicate_count == 0:
+            click.echo("No duplicate paths found.")
+            return
+        if not yes and not click.confirm(
+            f"Clear {duplicate_count} duplicate path records across {len(duplicate_docs)} documents? Files on disk will not be deleted."
+        ):
+            return
+        result = db.clear_all_duplicate_paths()
+        suffix = "" if result["removed_count"] == 1 else "s"
+        click.echo(
+            f"Cleared {result['removed_count']} duplicate path{suffix} "
+            f"across {result['document_count']} documents."
+        )
+    finally:
+        db.close()
+
+
 @cli.command("web")
 @click.option("--host", default="127.0.0.1", show_default=True, help="Host interface to bind")
 @click.option("--port", default=8421, show_default=True, type=int, help="Port for the web UI")

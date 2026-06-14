@@ -32,6 +32,10 @@
               <span class="stat-label">Needs Review</span>
               <strong id="stat-review">0</strong>
             </div>
+            <div class="stat-card">
+              <span class="stat-label">Duplicates</span>
+              <strong id="stat-duplicates">0</strong>
+            </div>
             <div class="stat-card stat-card-wide" role="button" tabindex="0" aria-label="Refresh since last scan stat">
               <span class="stat-label">Since Last Scan</span>
               <strong id="stat-waiting-scan">0</strong>
@@ -131,6 +135,7 @@
             </div>
             <div class="section-heading-actions" style="display: flex; align-items: center; gap: 16px;">
               <span id="doc-count" class="pill"></span>
+              <button id="clear-duplicates-all" class="button" type="button">Clear Duplicates</button>
               <label id="freeze-physics-label" class="freeze-physics-label">
                 <input id="freeze-physics-checkbox" type="checkbox">
                 <span>Freeze Physics</span>
@@ -207,6 +212,7 @@
               <div class="detail-actions">
                 <button id="detail-open" type="button" class="button">Open Document</button>
                 <button id="detail-rescan" type="button" class="button">Rescan This Document</button>
+                <button id="detail-clear-duplicates" type="button" class="button hidden">Clear Duplicates</button>
               </div>
             </form>
           </section>

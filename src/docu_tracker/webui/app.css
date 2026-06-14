@@ -511,10 +511,17 @@ fieldset {
 input,
 select,
 textarea {
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
   border: 1px solid rgba(50, 71, 67, 0.14);
   background: rgba(255, 255, 255, 0.82);
   border-radius: 14px;
   padding: 11px 13px;
+}
+
+input[type="checkbox"] {
+  width: auto;
 }
 
 input:focus,
@@ -570,8 +577,10 @@ textarea:focus {
   gap: 18px;
   align-content: start;
   grid-auto-rows: max-content;
+  min-width: 0;
   max-height: calc(100vh - 260px);
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding-right: 4px;
 }
 
@@ -580,7 +589,16 @@ textarea:focus {
   gap: 16px;
   justify-content: space-between;
   align-items: start;
+  min-width: 0;
   margin-bottom: 16px;
+}
+
+.section-heading > div {
+  min-width: 0;
+}
+
+.section-heading h2 {
+  overflow-wrap: anywhere;
 }
 
 .pill {
@@ -822,7 +840,14 @@ tbody tr.selected {
 }
 
 .topic-option input {
+  width: auto;
+  flex: 0 0 auto;
   margin-top: 3px;
+}
+
+.topic-option span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .meta-grid {
@@ -835,9 +860,49 @@ tbody tr.selected {
 }
 
 .path-list {
+  display: grid;
+  gap: 8px;
   margin: 8px 0 0;
-  padding-left: 18px;
-  word-break: break-word;
+  padding-left: 0;
+  list-style: none;
+}
+
+.path-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(50, 71, 67, 0.1);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.path-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.path-badge,
+.path-clear-button {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  font-size: 0.78rem;
+}
+
+.path-badge {
+  padding: 5px 9px;
+  background: rgba(11, 110, 98, 0.1);
+  color: var(--accent-strong);
+}
+
+.path-clear-button {
+  border: 1px solid rgba(156, 56, 43, 0.14);
+  padding: 5px 10px;
+  background: rgba(156, 56, 43, 0.09);
+  color: var(--danger);
+  cursor: pointer;
 }
 
 .detail-actions {
@@ -1020,6 +1085,7 @@ tbody tr.selected {
   display: block;
 }
 
+#clear-duplicates-all,
 #view-toggle-btn {
   font-size: 0.85rem;
   padding: 6px 14px;
@@ -1031,12 +1097,14 @@ tbody tr.selected {
   background: var(--paper);
 }
 
+#clear-duplicates-all:hover,
 #view-toggle-btn:hover {
   background: var(--accent-soft);
   border-color: var(--accent);
   color: var(--accent-strong);
 }
 
+#clear-duplicates-all:active,
 #view-toggle-btn.active {
   background: var(--accent);
   color: white;
