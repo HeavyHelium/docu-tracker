@@ -204,6 +204,23 @@ def test_show_nonexistent(runner):
     assert "not found" in result.output.lower() or result.exit_code != 0
 
 
+def test_prune_missing_command(runner, tmp_path, monkeypatch):
+    _seed_documents(runner, tmp_path, monkeypatch)
+    missing_path = tmp_path / "missing-copy.pdf"
+    db = _open_test_db()
+    doc = db.get_document(1)
+    db.add_duplicate_path(doc["file_hash"], str(missing_path))
+    db.close()
+
+    result = runner.invoke(cli, ["prune-missing", "--yes"])
+
+    assert result.exit_code == 0
+    assert "Pruned 1 missing path" in result.output
+    db = _open_test_db()
+    assert db.get_document(1)["paths"] == doc["paths"]
+    db.close()
+
+
 def test_clear_duplicates_for_document(runner, tmp_path, monkeypatch):
     _seed_documents(runner, tmp_path, monkeypatch)
     db = _open_test_db()

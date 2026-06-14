@@ -249,6 +249,9 @@ class DocuTrackerWebApp:
                     since=payload.get("since"),
                 )
                 return _json_response(start_response, 200, result)
+            if path == "/api/missing-files/prune" and method == "POST":
+                result = self.prune_missing_file_records()
+                return _json_response(start_response, 200, result)
             if path == "/api/session/open" and method == "POST":
                 payload = self._parse_json(environ)
                 return _json_response(start_response, 200, self.open_session(payload))
@@ -495,6 +498,11 @@ class DocuTrackerWebApp:
             except ValueError as exc:
                 raise HTTPError(400, str(exc)) from exc
         return {"ok": True}
+
+    def prune_missing_file_records(self):
+        with database_for_path(self.db_path) as db:
+            result = db.prune_missing_file_records()
+        return {"ok": True, **result}
 
     def _delete_duplicate_file(self, file_path):
         if not os.path.exists(file_path):

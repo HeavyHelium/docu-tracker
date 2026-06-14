@@ -198,6 +198,46 @@ class Database:
             "removed_count": removed_count,
         }
 
+    def prune_missing_file_records(self):
+        rows = self.conn.execute(
+            "SELECT id, document_id, file_path FROM document_paths ORDER BY document_id, added_at, id"
+        ).fetchall()
+        missing_path_ids = []
+        affected_doc_ids = set()
+        for path_id, doc_id, file_path in rows:
+            if not os.path.exists(file_path):
+                missing_path_ids.append(path_id)
+                affected_doc_ids.add(doc_id)
+
+        if missing_path_ids:
+            placeholders = ",".join("?" for _ in missing_path_ids)
+            self.conn.execute(
+                f"DELETE FROM document_paths WHERE id IN ({placeholders})",
+                missing_path_ids,
+            )
+
+        removed_doc_ids = []
+        for doc_id in affected_doc_ids:
+            remaining_count = self.conn.execute(
+                "SELECT COUNT(*) FROM document_paths WHERE document_id = ?",
+                (doc_id,),
+            ).fetchone()[0]
+            if remaining_count == 0:
+                removed_doc_ids.append(doc_id)
+
+        for doc_id in removed_doc_ids:
+            self.conn.execute(
+                "DELETE FROM document_topics WHERE document_id = ?",
+                (doc_id,),
+            )
+            self.conn.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
+
+        self.conn.commit()
+        return {
+            "removed_path_count": len(missing_path_ids),
+            "removed_document_count": len(removed_doc_ids),
+        }
+
     def get_document(self, doc_id):
         row = self.conn.execute(
             "SELECT id, file_hash, title, authors, summary, status, scanned_at, file_modified_at "

@@ -213,6 +213,32 @@ def test_duplicate_scan_route_tracks_untracked_duplicate_group(tmp_path, monkeyp
     assert document["paths"] == [str(first_path), str(second_path)]
 
 
+def test_prune_missing_files_route(tmp_path, monkeypatch):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    app = DocuTrackerWebApp(config_dir=str(config_dir), cwd=str(tmp_path))
+
+    existing_path = tmp_path / "paper.pdf"
+    missing_path = tmp_path / "paper-copy.pdf"
+    existing_path.write_bytes(b"pdf-bytes")
+    doc_id = seed_document(app, existing_path)
+
+    db = Database(app.db_path)
+    db.initialize()
+    db.add_duplicate_path("hash-Seed Paper", str(missing_path))
+    db.close()
+
+    response = call_app(app, "POST", "/api/missing-files/prune")
+
+    assert response["status"].startswith("200")
+    assert response["json"]["removed_path_count"] == 1
+    assert response["json"]["removed_document_count"] == 0
+    state_response = call_app(app, "GET", "/api/state")
+    docs_by_id = {doc["id"]: doc for doc in state_response["json"]["documents"]}
+    assert docs_by_id[doc_id]["paths"] == [str(existing_path)]
+
+
 def test_topic_crud_routes(tmp_path, monkeypatch):
     config_dir = tmp_path / "config"
     config_dir.mkdir()

@@ -566,6 +566,27 @@ def untag(doc_id, topic_name):
     db.close()
 
 
+@cli.command("prune-missing")
+@click.option("--yes", is_flag=True, help="Skip the confirmation prompt")
+def prune_missing(yes):
+    """Remove tracker records for files that no longer exist."""
+    if not yes and not click.confirm(
+        "Remove tracker records for missing files? Documents with no remaining paths will be removed."
+    ):
+        return
+    db = get_db()
+    try:
+        result = db.prune_missing_file_records()
+        path_suffix = "" if result["removed_path_count"] == 1 else "s"
+        doc_suffix = "" if result["removed_document_count"] == 1 else "s"
+        click.echo(
+            f"Pruned {result['removed_path_count']} missing path{path_suffix} "
+            f"and removed {result['removed_document_count']} document{doc_suffix}."
+        )
+    finally:
+        db.close()
+
+
 def _delete_duplicate_file(file_path):
     if not os.path.exists(file_path):
         return False
