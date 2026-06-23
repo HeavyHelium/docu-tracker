@@ -262,6 +262,26 @@
       </main>
     </div>
     <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <script>
+      window.MathJax = {
+        tex: {
+          inlineMath: [["$", "$"], ["\\(", "\\)"]],
+          displayMath: [["$$", "$$"], ["\\[", "\\]"]],
+          processEscapes: true,
+          packages: { "[+]": ["ams"] }
+        },
+        svg: { fontCache: "local" },
+        options: { skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"] },
+        startup: {
+          typeset: false,
+          pageReady: () =>
+            window.MathJax.startup.defaultReady().then(() => {
+              document.dispatchEvent(new Event("mathjax-ready"));
+            })
+        }
+      };
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js" async></script>
     <script src="/app.js"></script>
   </body>
 </html>

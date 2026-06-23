@@ -704,6 +704,7 @@ function renderNotebook() {
       </div>
     </div>
   `;
+  typesetMath(els.notebookContainer.querySelector("#notebook-preview"));
 }
 
 
@@ -910,6 +911,18 @@ function renderInlineMarkdown(value) {
     return token;
   });
 
+  // Protect inline math ($...$ and \(...\)) before markdown so emphasis/escaping
+  // can't corrupt the LaTeX; MathJax renders the .math-inline spans later.
+  const mathSpans = [];
+  const stashMath = (_match, content) => {
+    const token = `@@MATH${mathSpans.length}@@`;
+    mathSpans.push(`<span class="math-inline">${escapeHtml(content)}</span>`);
+    return token;
+  };
+  text = text
+    .replace(/\\\(([\s\S]+?)\\\)/g, stashMath)
+    .replace(/\$(?!\$)([^\n$]+?)\$/g, stashMath);
+
   text = escapeHtml(text);
   text = text.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+&quot;([^&]*)&quot;)?\)/g, (_match, alt, url, title) => {
     const titleAttribute = title ? ` title="${escapeAttribute(title)}"` : "";
@@ -920,12 +933,14 @@ function renderInlineMarkdown(value) {
     return `<a href="${escapeAttribute(safeMarkdownUrl(url))}"${titleAttribute} target="_blank" rel="noopener noreferrer">${label}</a>`;
   });
   text = text
-    .replace(/\$([^$]+)\$/g, `<span class="math-inline">$1</span>`)
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/\*([^*]+)\*/g, "<em>$1</em>");
 
   for (const [index, code] of codeSpans.entries()) {
     text = text.replaceAll(`@@CODE${index}@@`, code);
+  }
+  for (const [index, math] of mathSpans.entries()) {
+    text = text.replaceAll(`@@MATH${index}@@`, math);
   }
   return text;
 }
@@ -1064,11 +1079,49 @@ function renderMarkdown(value) {
 }
 
 
+// Render the LaTeX in .math-inline / .math-display nodes via MathJax (loaded from
+// the CDN in index.html). No-op until MathJax has finished loading; the
+// "mathjax-ready" listener re-runs it for the initial render.
+let mathStylesAdded = false;
+function ensureMathStyles() {
+  if (mathStylesAdded || !window.MathJax || !window.MathJax.svgStylesheet) return;
+  document.head.appendChild(window.MathJax.svgStylesheet());
+  mathStylesAdded = true;
+}
+
+function typesetMath(container) {
+  if (!container || !window.MathJax || !window.MathJax.tex2svgPromise) return;
+  ensureMathStyles();
+  const nodes = container.querySelectorAll(
+    ".math-inline:not([data-math-done]), .math-display:not([data-math-done])"
+  );
+  nodes.forEach((node) => {
+    const tex = node.textContent;
+    const display = node.classList.contains("math-display");
+    window.MathJax.tex2svgPromise(tex, { display })
+      .then((wrapper) => {
+        const svg = wrapper.querySelector("svg");
+        if (!svg) return;
+        node.textContent = "";
+        node.appendChild(svg);
+        node.setAttribute("data-math-done", "");
+      })
+      .catch(() => {});
+  });
+}
+
+function notebookPreviewElement() {
+  return els.notebookContainer.querySelector("#notebook-preview");
+}
+
+document.addEventListener("mathjax-ready", () => typesetMath(notebookPreviewElement()));
+
 function updateNotebookPreview() {
   const bodyInput = els.notebookContainer.querySelector("#notebook-body");
   const preview = els.notebookContainer.querySelector("#notebook-preview");
   if (!bodyInput || !preview) return;
   preview.innerHTML = renderMarkdown(bodyInput.value);
+  typesetMath(preview);
 }
 
 
