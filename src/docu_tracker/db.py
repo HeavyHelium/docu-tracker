@@ -62,6 +62,22 @@ class Database:
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS notebook_notes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                body TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS notebook_note_documents (
+                note_id INTEGER NOT NULL,
+                document_id INTEGER NOT NULL,
+                PRIMARY KEY (note_id, document_id),
+                FOREIGN KEY (note_id) REFERENCES notebook_notes(id) ON DELETE CASCADE,
+                FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+            );
         """)
         self.conn.commit()
         self._migrate()
@@ -318,6 +334,99 @@ class Database:
         query += " ORDER BY d.file_modified_at DESC"
         rows = self.conn.execute(query, params).fetchall()
         return [self.get_document(r[0]) for r in rows]
+
+
+    def _document_ids_for_note(self, note_id):
+        rows = self.conn.execute(
+            "SELECT document_id FROM notebook_note_documents WHERE note_id = ? "
+            "ORDER BY document_id",
+            (note_id,),
+        ).fetchall()
+        return [row[0] for row in rows]
+
+    def get_notebook_note(self, note_id):
+        row = self.conn.execute(
+            "SELECT id, title, body, created_at, updated_at FROM notebook_notes WHERE id = ?",
+            (note_id,),
+        ).fetchone()
+        if not row:
+            return None
+        return {
+            "id": row[0],
+            "title": row[1],
+            "body": row[2],
+            "created_at": row[3],
+            "updated_at": row[4],
+            "document_ids": self._document_ids_for_note(row[0]),
+        }
+
+    def list_notebook_notes(self):
+        rows = self.conn.execute(
+            "SELECT id FROM notebook_notes ORDER BY updated_at DESC, id DESC"
+        ).fetchall()
+        return [self.get_notebook_note(row[0]) for row in rows]
+
+    def add_notebook_note(self, title, body="", document_ids=None):
+        now = datetime.now(timezone.utc).isoformat()
+        cursor = self.conn.execute(
+            "INSERT INTO notebook_notes (title, body, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?)",
+            (title, body, now, now),
+        )
+        note_id = cursor.lastrowid
+        self.set_notebook_note_documents(note_id, document_ids or [], commit=False)
+        self.conn.commit()
+        return note_id
+
+    def update_notebook_note(
+        self,
+        note_id,
+        title=None,
+        body=None,
+        document_ids=None,
+    ):
+        fields = []
+        params = []
+        if title is not None:
+            fields.append("title = ?")
+            params.append(title)
+        if body is not None:
+            fields.append("body = ?")
+            params.append(body)
+        if fields:
+            fields.append("updated_at = ?")
+            params.append(datetime.now(timezone.utc).isoformat())
+            params.append(note_id)
+            self.conn.execute(
+                f"UPDATE notebook_notes SET {', '.join(fields)} WHERE id = ?",
+                params,
+            )
+        if document_ids is not None:
+            self.set_notebook_note_documents(note_id, document_ids, commit=False)
+            if not fields:
+                self.conn.execute(
+                    "UPDATE notebook_notes SET updated_at = ? WHERE id = ?",
+                    (datetime.now(timezone.utc).isoformat(), note_id),
+                )
+        self.conn.commit()
+
+    def set_notebook_note_documents(self, note_id, document_ids, commit=True):
+        self.conn.execute(
+            "DELETE FROM notebook_note_documents WHERE note_id = ?",
+            (note_id,),
+        )
+        for doc_id in document_ids:
+            self.conn.execute(
+                "INSERT OR IGNORE INTO notebook_note_documents (note_id, document_id) "
+                "VALUES (?, ?)",
+                (note_id, doc_id),
+            )
+        if commit:
+            self.conn.commit()
+
+    def delete_notebook_note(self, note_id):
+        self.conn.execute("DELETE FROM notebook_notes WHERE id = ?", (note_id,))
+        self.conn.commit()
 
     def list_topics(self):
         rows = self.conn.execute("SELECT name FROM topics ORDER BY name").fetchall()

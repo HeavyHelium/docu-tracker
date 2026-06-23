@@ -1,7 +1,10 @@
+import base64
+import errno
 import json
 import os
 import sys
 import threading
+import uuid
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
@@ -10,7 +13,7 @@ from http import HTTPStatus
 from io import BytesIO
 from pathlib import Path
 from socketserver import ThreadingMixIn
-from urllib.parse import quote, unquote
+from urllib.parse import parse_qs, quote, unquote
 from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
 
 from docu_tracker.analyzer import analyze_document
@@ -23,6 +26,15 @@ ASSET_DIR = Path(__file__).resolve().parent / "webui"
 MAX_WORKERS = 4
 VALID_STATUSES = ["unread", "reading", "read", "needs_review"]
 SESSION_SHUTDOWN_GRACE_SECONDS = 2.0
+
+NOTEBOOK_ATTACHMENT_TYPES = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/gif": ".gif",
+    "image/webp": ".webp",
+}
+MAX_NOTEBOOK_ATTACHMENT_BYTES = 10 * 1024 * 1024
+
 
 
 class HTTPError(Exception):
@@ -82,6 +94,19 @@ def _json_response(start_response, status_code, payload):
     return [body]
 
 
+
+def _bytes_response(start_response, status_code, body, content_type):
+    start_response(
+        f"{status_code} {HTTPStatus(status_code).phrase}",
+        [
+            ("Content-Type", content_type),
+            ("Content-Length", str(len(body))),
+            ("Cache-Control", "no-store"),
+        ],
+    )
+    return [body]
+
+
 def _text_response(start_response, status_code, body, content_type):
     encoded = body if isinstance(body, bytes) else body.encode("utf-8")
     start_response(
@@ -116,6 +141,17 @@ def _serialize_document(doc):
         "source": _document_source(doc["paths"]),
     }
 
+
+
+def _serialize_notebook_note(note):
+    return {
+        "id": note["id"],
+        "title": note["title"] or "",
+        "body": note["body"] or "",
+        "created_at": note["created_at"],
+        "updated_at": note["updated_at"],
+        "document_ids": note["document_ids"],
+    }
 
 def _configured_scan_paths(config):
     return [
@@ -252,6 +288,27 @@ class DocuTrackerWebApp:
             if path == "/api/missing-files/prune" and method == "POST":
                 result = self.prune_missing_file_records()
                 return _json_response(start_response, 200, result)
+            if path == "/api/notebook" and method == "GET":
+                return _json_response(start_response, 200, self.notebook_state())
+            if path == "/api/notebook" and method == "POST":
+                payload = self._parse_json(environ)
+                result = self.create_notebook_note(payload)
+                return _json_response(start_response, 201, result)
+            if path == "/api/notebook/attachments" and method == "POST":
+                content_type = (environ.get("CONTENT_TYPE") or "").split(";", 1)[0].lower()
+                if content_type in NOTEBOOK_ATTACHMENT_TYPES:
+                    query = parse_qs(environ.get("QUERY_STRING") or "")
+                    result = self.create_notebook_attachment_from_bytes(
+                        self._read_request_body(environ),
+                        content_type,
+                        (query.get("name") or [""])[0],
+                    )
+                else:
+                    payload = self._parse_json(environ)
+                    result = self.create_notebook_attachment(payload)
+                return _json_response(start_response, 201, result)
+            if path.startswith("/api/notebook/attachments/") and method == "GET":
+                return self.stream_notebook_attachment(path, start_response)
             if path == "/api/session/open" and method == "POST":
                 payload = self._parse_json(environ)
                 return _json_response(start_response, 200, self.open_session(payload))
@@ -259,6 +316,8 @@ class DocuTrackerWebApp:
                 payload = self._parse_json(environ)
                 return _json_response(start_response, 200, self.close_session(payload))
 
+            if path.startswith("/api/notebook/"):
+                return self._handle_notebook_route(path, method, environ, start_response)
             if path.startswith("/api/documents/"):
                 return self._handle_document_route(path, method, environ, start_response)
             if path.startswith("/api/topics/"):
@@ -277,6 +336,26 @@ class DocuTrackerWebApp:
                 500,
                 {"error": f"Internal server error: {exc}"},
             )
+
+
+    def _handle_notebook_route(self, path, method, environ, start_response):
+        parts = [unquote(part) for part in path.split("/") if part]
+        if len(parts) != 3:
+            raise HTTPError(404, "Not found")
+        try:
+            note_id = int(parts[2])
+        except ValueError as exc:
+            raise HTTPError(400, "Notebook note id must be an integer") from exc
+
+        if method == "PATCH":
+            payload = self._parse_json(environ)
+            result = self.update_notebook_note(note_id, payload)
+            return _json_response(start_response, 200, result)
+        if method == "DELETE":
+            result = self.delete_notebook_note(note_id)
+            return _json_response(start_response, 200, result)
+
+        raise HTTPError(404, "Not found")
 
     def _handle_document_route(self, path, method, environ, start_response):
         parts = [unquote(part) for part in path.split("/") if part]
@@ -326,12 +405,15 @@ class DocuTrackerWebApp:
 
         raise HTTPError(404, "Not found")
 
-    def _parse_json(self, environ):
+    def _read_request_body(self, environ):
         try:
             length = int(environ.get("CONTENT_LENGTH") or "0")
         except ValueError as exc:
             raise HTTPError(400, "Invalid Content-Length header") from exc
-        raw_body = environ["wsgi.input"].read(length) if length else b""
+        return environ["wsgi.input"].read(length) if length else b""
+
+    def _parse_json(self, environ):
+        raw_body = self._read_request_body(environ)
         if not raw_body:
             return {}
         try:
@@ -397,10 +479,15 @@ class DocuTrackerWebApp:
                 {"name": name, "description": description}
                 for name, description in db.list_topics_with_descriptions()
             ]
+            notebook_notes = [
+                _serialize_notebook_note(note)
+                for note in db.list_notebook_notes()
+            ]
         return {
             "documents": docs,
             "topics": topics,
             "scan_paths": config.get("scan_paths", []),
+            "notebook_notes": notebook_notes,
             "model": config.get("model"),
             "has_api_key": bool(config.get("anthropic_api_key")),
             "statuses": VALID_STATUSES,
@@ -415,6 +502,144 @@ class DocuTrackerWebApp:
                 for scan_path in scan_paths
             }
         return _waiting_since_last_scan(scan_paths, last_scan_by_path)
+
+
+    def notebook_state(self):
+        with database_for_path(self.db_path) as db:
+            notes = [
+                _serialize_notebook_note(note)
+                for note in db.list_notebook_notes()
+            ]
+        return {"notebook_notes": notes}
+
+    def _clean_notebook_document_ids(self, db, document_ids):
+        if document_ids is None:
+            return None
+        if not isinstance(document_ids, list):
+            raise HTTPError(400, "Notebook document_ids must be a list")
+        cleaned_ids = []
+        for raw_doc_id in document_ids:
+            if not isinstance(raw_doc_id, int):
+                raise HTTPError(400, "Notebook document IDs must be integers")
+            if raw_doc_id in cleaned_ids:
+                continue
+            if not db.get_document(raw_doc_id):
+                raise HTTPError(400, f"Unknown document id {raw_doc_id}")
+            cleaned_ids.append(raw_doc_id)
+        return cleaned_ids
+
+    def create_notebook_note(self, payload):
+        title = (payload.get("title") or "").strip()
+        if not title:
+            raise HTTPError(400, "Notebook title is required")
+        body = payload.get("body") or ""
+        if not isinstance(body, str):
+            raise HTTPError(400, "Notebook body must be a string")
+        with database_for_path(self.db_path) as db:
+            document_ids = self._clean_notebook_document_ids(
+                db,
+                payload.get("document_ids", []),
+            )
+            note_id = db.add_notebook_note(title, body, document_ids)
+            return {"note": _serialize_notebook_note(db.get_notebook_note(note_id))}
+
+    def update_notebook_note(self, note_id, payload):
+        with database_for_path(self.db_path) as db:
+            note = db.get_notebook_note(note_id)
+            if not note:
+                raise HTTPError(404, f"Notebook note {note_id} not found")
+
+            title = payload.get("title") if "title" in payload else None
+            if title is not None:
+                if not isinstance(title, str):
+                    raise HTTPError(400, "Notebook title must be a string")
+                title = title.strip()
+                if not title:
+                    raise HTTPError(400, "Notebook title is required")
+
+            body = payload.get("body") if "body" in payload else None
+            if body is not None and not isinstance(body, str):
+                raise HTTPError(400, "Notebook body must be a string")
+
+            document_ids = self._clean_notebook_document_ids(
+                db,
+                payload.get("document_ids") if "document_ids" in payload else None,
+            )
+            db.update_notebook_note(
+                note_id,
+                title=title,
+                body=body,
+                document_ids=document_ids,
+            )
+            return {"note": _serialize_notebook_note(db.get_notebook_note(note_id))}
+
+    def delete_notebook_note(self, note_id):
+        with database_for_path(self.db_path) as db:
+            if not db.get_notebook_note(note_id):
+                raise HTTPError(404, f"Notebook note {note_id} not found")
+            db.delete_notebook_note(note_id)
+        return {"ok": True}
+
+
+    def _notebook_attachment_dir(self):
+        return Path(self.config_dir) / "notebook_attachments"
+
+    def _write_notebook_attachment(self, body, content_type):
+        suffix = NOTEBOOK_ATTACHMENT_TYPES.get(content_type)
+        if not suffix:
+            raise HTTPError(400, "Only PNG, JPEG, GIF, and WebP images can be pasted")
+        if not body:
+            raise HTTPError(400, "Attachment is empty")
+        if len(body) > MAX_NOTEBOOK_ATTACHMENT_BYTES:
+            raise HTTPError(400, "Attachment is larger than 10 MB")
+
+        attachment_dir = self._notebook_attachment_dir()
+        attachment_dir.mkdir(parents=True, exist_ok=True)
+        filename = f"{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex}{suffix}"
+        path = attachment_dir / filename
+        path.write_bytes(body)
+        return {
+            "url": f"/api/notebook/attachments/{quote(filename)}",
+            "filename": filename,
+            "content_type": content_type,
+        }
+
+    def create_notebook_attachment_from_bytes(self, body, content_type, name=""):
+        return self._write_notebook_attachment(body, content_type)
+
+    def create_notebook_attachment(self, payload):
+        data_url = payload.get("data_url")
+        if not isinstance(data_url, str) or not data_url.startswith("data:"):
+            raise HTTPError(400, "Attachment data_url is required")
+        try:
+            header, encoded = data_url.split(",", 1)
+        except ValueError as exc:
+            raise HTTPError(400, "Invalid attachment data URL") from exc
+        if ";base64" not in header:
+            raise HTTPError(400, "Attachment data URL must be base64 encoded")
+        content_type = header[5:].split(";", 1)[0].lower()
+        try:
+            body = base64.b64decode(encoded, validate=True)
+        except ValueError as exc:
+            raise HTTPError(400, "Invalid base64 attachment data") from exc
+        return self._write_notebook_attachment(body, content_type)
+
+    def stream_notebook_attachment(self, path, start_response):
+        parts = [unquote(part) for part in path.split("/") if part]
+        if len(parts) != 4:
+            raise HTTPError(404, "Not found")
+        filename = parts[3]
+        if filename != os.path.basename(filename):
+            raise HTTPError(400, "Invalid attachment name")
+        suffix = Path(filename).suffix.lower()
+        content_type = next(
+            (kind for kind, ext in NOTEBOOK_ATTACHMENT_TYPES.items() if ext == suffix),
+            "application/octet-stream",
+        )
+        attachment_path = self._notebook_attachment_dir() / filename
+        if not attachment_path.exists() or not attachment_path.is_file():
+            raise HTTPError(404, "Attachment not found")
+        return _bytes_response(start_response, 200, attachment_path.read_bytes(), content_type)
 
     def update_document(self, doc_id, payload):
         with database_for_path(self.db_path) as db:
@@ -964,20 +1189,40 @@ class QuietWSGIRequestHandler(WSGIRequestHandler):
         print(format % args, file=sys.stdout)
 
 
-def serve_web_app(host="127.0.0.1", port=8421, config_dir=None, cwd=None):
+def serve_web_app(host="127.0.0.1", port=8421, config_dir=None, cwd=None, open_browser=False):
     app = DocuTrackerWebApp(config_dir=config_dir, cwd=cwd)
-    with make_server(
-        host,
-        port,
-        app,
-        server_class=ThreadingWSGIServer,
-        handler_class=QuietWSGIRequestHandler,
-    ) as httpd:
-        app.shutdown_callback = httpd.shutdown
+    try:
+        httpd = make_server(
+            host,
+            port,
+            app,
+            server_class=ThreadingWSGIServer,
+            handler_class=QuietWSGIRequestHandler,
+        )
+    except OSError as exc:
+        if exc.errno != errno.EADDRINUSE:
+            raise
         print(
-            f"Docu Tracker web UI running at http://{host}:{httpd.server_port}",
+            f"Port {port} is already in use; choosing an available port instead.",
             file=sys.stdout,
         )
+        httpd = make_server(
+            host,
+            0,
+            app,
+            server_class=ThreadingWSGIServer,
+            handler_class=QuietWSGIRequestHandler,
+        )
+
+    with httpd:
+        app.shutdown_callback = httpd.shutdown
+        actual_port = httpd.server_port
+        print(
+            f"Docu Tracker web UI running at http://{host}:{actual_port}",
+            file=sys.stdout,
+        )
+        if open_browser:
+            open_web_ui(host=host, port=actual_port)
         httpd.serve_forever()
 
 
@@ -986,12 +1231,15 @@ def open_web_ui(host="127.0.0.1", port=8421):
     threading.Timer(0.3, lambda: webbrowser.open(url)).start()
 
 
-def build_test_environ(method="GET", path="/", payload=None):
-    body = json.dumps(payload).encode("utf-8") if payload is not None else b""
+def build_test_environ(method="GET", path="/", payload=None, body=None, content_type="application/json"):
+    if body is None:
+        body = json.dumps(payload).encode("utf-8") if payload is not None else b""
+    path_info, _, query_string = path.partition("?")
     return {
         "REQUEST_METHOD": method,
-        "PATH_INFO": path,
+        "PATH_INFO": path_info,
+        "QUERY_STRING": query_string,
         "CONTENT_LENGTH": str(len(body)),
-        "CONTENT_TYPE": "application/json",
+        "CONTENT_TYPE": content_type,
         "wsgi.input": BytesIO(body),
     }

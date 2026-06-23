@@ -388,8 +388,13 @@ def test_web_opens_browser_by_default(runner):
         with patch("docu_tracker.web.serve_web_app") as mock_serve:
             result = runner.invoke(cli, ["web"])
     assert result.exit_code == 0
-    mock_open.assert_called_once_with(host="127.0.0.1", port=8421)
-    mock_serve.assert_called_once()
+    mock_open.assert_not_called()
+    mock_serve.assert_called_once_with(
+        host="127.0.0.1",
+        port=8421,
+        cwd=os.getcwd(),
+        open_browser=True,
+    )
 
 
 def test_web_can_skip_browser(runner):
@@ -399,4 +404,9 @@ def test_web_can_skip_browser(runner):
             result = runner.invoke(cli, ["web", "--no-browser"])
     assert result.exit_code == 0
     mock_open.assert_not_called()
-    mock_serve.assert_called_once()
+    mock_serve.assert_called_once_with(
+        host="127.0.0.1",
+        port=8421,
+        cwd=os.getcwd(),
+        open_browser=False,
+    )

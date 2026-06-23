@@ -763,8 +763,6 @@ def clear_duplicates(doc_id, yes, delete_duplicates):
 @click.option("--no-browser", is_flag=True, help="Do not open the browser automatically")
 def web_ui(host, port, no_browser):
     """Launch the local web UI."""
-    from docu_tracker.web import open_web_ui, serve_web_app
+    from docu_tracker.web import serve_web_app
 
-    if not no_browser:
-        open_web_ui(host=host, port=port)
-    serve_web_app(host=host, port=port, cwd=os.getcwd())
+    serve_web_app(host=host, port=port, cwd=os.getcwd(), open_browser=not no_browser)
