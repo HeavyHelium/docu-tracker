@@ -685,6 +685,7 @@ function renderNotebook() {
               <h3>Research Notes</h3>
             </div>
             <button id="notebook-new" class="button button-primary" type="button">New</button>
+            <button id="notebook-export-all" class="button" type="button">Export all</button>
           </div>
           <div class="notebook-note-list">
             ${state.notebookNotes.length ? state.notebookNotes.map((item) => `
@@ -1084,6 +1085,7 @@ function renderNotebookEditor(note) {
         <input id="notebook-title" class="notebook-title-input" type="text" value="${escapeAttribute(note.title)}" placeholder="Note title">
       </div>
       <div class="notebook-editor-actions">
+        <button id="notebook-export" class="button" type="button">Export PDF</button>
         <button id="notebook-save" class="button button-primary" type="button">Save</button>
         <button id="notebook-delete" class="button button-danger" type="button">Delete</button>
       </div>
@@ -1130,6 +1132,78 @@ function documentMarkdownLink(doc) {
   const title = (doc.title || `Document #${doc.id}`).replaceAll("[", "\\[").replaceAll("]", "\\]");
   const url = new URL(`/api/documents/${doc.id}/open`, window.location.href).href;
   return `[${title}](${url})`;
+}
+
+function buildNoteExportSection(note) {
+  const title = escapeHtml(note.title || "Untitled note");
+  const topics = (note.topics || []).length
+    ? `<div class="pdf-note-topics">${note.topics.map((t) => `<span>${escapeHtml(t)}</span>`).join("")}</div>`
+    : "";
+  const linkedDocs = noteReferencedDocuments(note);
+  const linked = linkedDocs.length
+    ? `<section class="pdf-linked"><h2>Linked files</h2><ul>${linkedDocs.map((doc) => `<li><strong>${escapeHtml(doc.title || `Document #${doc.id}`)}</strong> — ${escapeHtml(doc.authors || doc.source || "No authors")}</li>`).join("")}</ul></section>`
+    : "";
+  return `<article class="pdf-note"><h1>${title}</h1>${topics}${renderMarkdown(note.body)}${linked}</article>`;
+}
+
+const PDF_PRINT_CSS = `
+  body { font-family: Georgia, "Times New Roman", serif; color: #111; margin: 2.5rem; line-height: 1.55; }
+  h1 { font-size: 1.7rem; margin: 0 0 0.4rem; }
+  h2, h3 { margin-top: 1.4rem; }
+  img { max-width: 100%; height: auto; }
+  .pdf-note-topics { margin: 0 0 1rem; }
+  .pdf-note-topics span { display: inline-block; font-size: 0.75rem; padding: 0.1rem 0.5rem; margin-right: 0.3rem; border: 1px solid #999; border-radius: 999px; }
+  .pdf-linked { margin-top: 1.5rem; border-top: 1px solid #ccc; padding-top: 0.6rem; }
+  .pdf-note { break-after: page; }
+  .pdf-note:last-child { break-after: auto; }
+  blockquote { border-left: 3px solid #ccc; margin-left: 0; padding-left: 1rem; color: #444; }
+  pre, code { font-family: "SFMono-Regular", Consolas, monospace; }
+  pre { background: #f5f5f5; padding: 0.75rem; overflow-x: auto; }
+`;
+
+function awaitImages(win) {
+  const images = Array.from(win.document.images || []);
+  const pending = images.filter((img) => !img.complete);
+  if (!pending.length) return Promise.resolve();
+  return Promise.race([
+    Promise.all(pending.map((img) => new Promise((resolve) => {
+      img.addEventListener("load", resolve, { once: true });
+      img.addEventListener("error", resolve, { once: true });
+    }))),
+    new Promise((resolve) => win.setTimeout(resolve, 3000)),
+  ]);
+}
+
+function openNotePrintWindow(docTitle, sectionsHtml) {
+  const win = window.open("", "_blank");
+  if (!win) {
+    showFlash("Could not open the print window — allow popups for this site.", "error");
+    return;
+  }
+  win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(docTitle)}</title><style>${PDF_PRINT_CSS}</style></head><body>${sectionsHtml}</body></html>`);
+  win.document.close();
+  awaitImages(win).then(() => {
+    win.focus();
+    win.print();
+  });
+}
+
+function exportNoteToPdf() {
+  const note = selectedNotebookNote();
+  if (!note) {
+    showFlash("Select a note to export.", "error");
+    return;
+  }
+  openNotePrintWindow(note.title || "Note", buildNoteExportSection(note));
+}
+
+function exportAllNotesToPdf() {
+  if (!state.notebookNotes.length) {
+    showFlash("No notes to export.", "error");
+    return;
+  }
+  const sections = state.notebookNotes.map(buildNoteExportSection).join("");
+  openNotePrintWindow("Notebook", sections);
 }
 
 function referenceSearchMatches(doc, term) {
@@ -2017,6 +2091,8 @@ els.notebookContainer.addEventListener("click", async (event) => {
   const noteButton = event.target.closest("button[data-note-id]");
   const saveButton = event.target.closest("#notebook-save");
   const deleteButton = event.target.closest("#notebook-delete");
+  const exportButton = event.target.closest("#notebook-export");
+  const exportAllButton = event.target.closest("#notebook-export-all");
   const openButton = event.target.closest("button[data-notebook-open-doc]");
   const copyButton = event.target.closest("button[data-copy-doc-markdown]");
   const markdownButton = event.target.closest("button[data-markdown-action]");
@@ -2045,6 +2121,8 @@ els.notebookContainer.addEventListener("click", async (event) => {
       await deleteNotebookNote();
       return;
     }
+    if (exportButton) { exportNoteToPdf(); return; }
+    if (exportAllButton) { exportAllNotesToPdf(); return; }
     if (copyButton) {
       await copyMarkdownLinkForDocument(Number(copyButton.dataset.copyDocMarkdown));
       return;
