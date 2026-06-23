@@ -692,6 +692,7 @@ function renderNotebook() {
                 <strong>${escapeHtml(item.title || "Untitled note")}</strong>
                 <span>${escapeHtml(notebookExcerpt(item))}</span>
                 <small>${item.document_ids.length} reference${item.document_ids.length === 1 ? "" : "s"} · ${formatDateTime(item.updated_at)}</small>
+                ${(item.topics || []).length ? `<div class="notebook-card-topics">${item.topics.map((t) => `<span class="notebook-card-topic">${escapeHtml(t)}</span>`).join("")}</div>` : ""}
               </button>
             `).join("") : `<div class="empty-state">Create a note to start a research map around the files in this tracker.</div>`}
           </div>
