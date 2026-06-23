@@ -649,6 +649,33 @@ def test_serve_web_app_falls_back_when_port_is_busy(tmp_path):
     assert calls == [("127.0.0.1", 8421), ("127.0.0.1", 0)]
 
 
+def test_notebook_topics_round_trip(tmp_path, monkeypatch):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    app = DocuTrackerWebApp(config_dir=str(config_dir), cwd=str(tmp_path))
+
+    created = call_app(
+        app, "POST", "/api/notebook",
+        {"title": "Topic note", "topics": ["Work"]},
+    )
+    assert created["status"].startswith("201")
+    assert created["json"]["note"]["topics"] == ["Work"]
+
+    note_id = created["json"]["note"]["id"]
+    updated = call_app(
+        app, "PATCH", f"/api/notebook/{note_id}",
+        {"topics": ["Academic"]},
+    )
+    assert updated["json"]["note"]["topics"] == ["Academic"]
+
+    bad = call_app(
+        app, "POST", "/api/notebook",
+        {"title": "Bad", "topics": "Work"},
+    )
+    assert bad["status"].startswith("400")
+
+
 def test_web_command_invokes_server(tmp_path, monkeypatch):
     config_dir = tmp_path / "config"
     config_dir.mkdir()

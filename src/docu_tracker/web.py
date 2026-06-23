@@ -151,6 +151,7 @@ def _serialize_notebook_note(note):
         "created_at": note["created_at"],
         "updated_at": note["updated_at"],
         "document_ids": note["document_ids"],
+        "topics": note["topics"],
     }
 
 def _configured_scan_paths(config):
@@ -528,6 +529,20 @@ class DocuTrackerWebApp:
             cleaned_ids.append(raw_doc_id)
         return cleaned_ids
 
+    def _clean_notebook_topics(self, topics):
+        if topics is None:
+            return None
+        if not isinstance(topics, list):
+            raise HTTPError(400, "Notebook topics must be a list")
+        cleaned = []
+        for raw in topics:
+            if not isinstance(raw, str):
+                raise HTTPError(400, "Notebook topics must be strings")
+            name = raw.strip()
+            if name and name not in cleaned:
+                cleaned.append(name)
+        return cleaned
+
     def create_notebook_note(self, payload):
         title = (payload.get("title") or "").strip()
         if not title:
@@ -540,7 +555,8 @@ class DocuTrackerWebApp:
                 db,
                 payload.get("document_ids", []),
             )
-            note_id = db.add_notebook_note(title, body, document_ids)
+            topics = self._clean_notebook_topics(payload.get("topics", []))
+            note_id = db.add_notebook_note(title, body, document_ids, topics=topics)
             return {"note": _serialize_notebook_note(db.get_notebook_note(note_id))}
 
     def update_notebook_note(self, note_id, payload):
@@ -565,11 +581,15 @@ class DocuTrackerWebApp:
                 db,
                 payload.get("document_ids") if "document_ids" in payload else None,
             )
+            topics = self._clean_notebook_topics(
+                payload.get("topics") if "topics" in payload else None
+            )
             db.update_notebook_note(
                 note_id,
                 title=title,
                 body=body,
                 document_ids=document_ids,
+                topics=topics,
             )
             return {"note": _serialize_notebook_note(db.get_notebook_note(note_id))}
 
