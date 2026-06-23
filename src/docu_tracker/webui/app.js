@@ -1072,6 +1072,7 @@ function updateNotebookPreview() {
 
 
 function renderNotebookEditor(note) {
+  const selectedTopics = new Set(note.topics || []);
   return `
     <div class="notebook-editor-header">
       <div>
@@ -1101,12 +1102,15 @@ function renderNotebookEditor(note) {
     <div class="notebook-topics">
       <p class="section-kicker">Topics</p>
       <div class="notebook-topic-chips">
-        ${state.topics.length ? state.topics.map((topic) => `
-          <label class="notebook-topic-chip ${(note.topics || []).includes(topic.name) ? "selected" : ""}">
-            <input type="checkbox" data-note-topic="${escapeAttribute(topic.name)}" ${(note.topics || []).includes(topic.name) ? "checked" : ""}>
+        ${state.topics.length ? state.topics.map((topic) => {
+          const selected = selectedTopics.has(topic.name);
+          return `
+          <label class="notebook-topic-chip ${selected ? "selected" : ""}">
+            <input type="checkbox" data-note-topic="${escapeAttribute(topic.name)}" ${selected ? "checked" : ""}>
             <span>${escapeHtml(topic.name)}</span>
           </label>
-        `).join("") : `<span class="empty-state">No topics defined yet.</span>`}
+        `;
+        }).join("") : `<span class="empty-state">No topics defined yet.</span>`}
       </div>
     </div>
     <div class="notebook-linked-files">
@@ -2083,6 +2087,8 @@ els.notebookContainer.addEventListener("change", async (event) => {
     else topics.delete(name);
     note.topics = Array.from(topics).sort();
     event.target.closest(".notebook-topic-chip")?.classList.toggle("selected", event.target.checked);
+    // Topics ride the debounced autosave (like title/body edits) rather than the
+    // immediate save used for document references, which re-renders the ref strip.
     scheduleNotebookAutosave();
     return;
   }
