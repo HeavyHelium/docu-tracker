@@ -78,6 +78,14 @@ class Database:
                 FOREIGN KEY (note_id) REFERENCES notebook_notes(id) ON DELETE CASCADE,
                 FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
             );
+
+            CREATE TABLE IF NOT EXISTS notebook_note_topics (
+                note_id INTEGER NOT NULL,
+                topic_id INTEGER NOT NULL,
+                PRIMARY KEY (note_id, topic_id),
+                FOREIGN KEY (note_id) REFERENCES notebook_notes(id) ON DELETE CASCADE,
+                FOREIGN KEY (topic_id) REFERENCES topics(id)
+            );
         """)
         self.conn.commit()
         self._migrate()
@@ -344,6 +352,15 @@ class Database:
         ).fetchall()
         return [row[0] for row in rows]
 
+    def _topics_for_note(self, note_id):
+        rows = self.conn.execute(
+            "SELECT t.name FROM topics t "
+            "JOIN notebook_note_topics nnt ON t.id = nnt.topic_id "
+            "WHERE nnt.note_id = ? ORDER BY t.name",
+            (note_id,),
+        ).fetchall()
+        return [row[0] for row in rows]
+
     def get_notebook_note(self, note_id):
         row = self.conn.execute(
             "SELECT id, title, body, created_at, updated_at FROM notebook_notes WHERE id = ?",
@@ -358,6 +375,7 @@ class Database:
             "created_at": row[3],
             "updated_at": row[4],
             "document_ids": self._document_ids_for_note(row[0]),
+            "topics": self._topics_for_note(row[0]),
         }
 
     def list_notebook_notes(self):
@@ -409,6 +427,24 @@ class Database:
                     (datetime.now(timezone.utc).isoformat(), note_id),
                 )
         self.conn.commit()
+
+    def set_notebook_note_topics(self, note_id, topic_names, commit=True):
+        self.conn.execute(
+            "DELETE FROM notebook_note_topics WHERE note_id = ?",
+            (note_id,),
+        )
+        for name in topic_names:
+            topic_row = self.conn.execute(
+                "SELECT id FROM topics WHERE name = ?", (name,)
+            ).fetchone()
+            if topic_row:
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO notebook_note_topics (note_id, topic_id) "
+                    "VALUES (?, ?)",
+                    (note_id, topic_row[0]),
+                )
+        if commit:
+            self.conn.commit()
 
     def set_notebook_note_documents(self, note_id, document_ids, commit=True):
         self.conn.execute(

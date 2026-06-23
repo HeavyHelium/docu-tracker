@@ -389,3 +389,19 @@ def test_untag_document(db):
     doc = db.get_document(doc_id)
     assert "Academic" not in doc["topics"]
     assert "Work" in doc["topics"]
+
+
+def test_notebook_note_topics_round_trip(db):
+    """Should set and read topics on a note, ignoring unknown topic names."""
+    note_id = db.add_notebook_note("Synthesis", body="body")
+    db.set_notebook_note_topics(note_id, ["Work", "Nonexistent", "Academic"])
+    note = db.get_notebook_note(note_id)
+    assert note["topics"] == ["Academic", "Work"]  # known only, name-ordered
+
+
+def test_notebook_note_topics_survive_rename(db):
+    """Renaming a topic should keep the note's link (stored by id)."""
+    note_id = db.add_notebook_note("Synthesis")
+    db.set_notebook_note_topics(note_id, ["Work"])
+    db.rename_topic("Work", "Career")
+    assert db.get_notebook_note(note_id)["topics"] == ["Career"]
