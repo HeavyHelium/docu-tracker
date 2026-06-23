@@ -1146,6 +1146,7 @@ function buildNoteExportSection(note) {
   return `<article class="pdf-note"><h1>${title}</h1>${topics}${renderMarkdown(note.body)}${linked}</article>`;
 }
 
+// Inlined into the print-only popup document (light theme, paper-friendly).
 const PDF_PRINT_CSS = `
   body { font-family: Georgia, "Times New Roman", serif; color: #111; margin: 2.5rem; line-height: 1.55; }
   h1 { font-size: 1.7rem; margin: 0 0 0.4rem; }
@@ -1174,6 +1175,9 @@ function awaitImages(win) {
   ]);
 }
 
+// `sectionsHtml` MUST already be escaped/sanitized by the caller (see
+// buildNoteExportSection); PDF_PRINT_CSS is a static constant. Both are written
+// verbatim into the popup document, so never pass unsanitized user input here.
 function openNotePrintWindow(docTitle, sectionsHtml) {
   const win = window.open("", "_blank");
   if (!win) {
@@ -1183,24 +1187,32 @@ function openNotePrintWindow(docTitle, sectionsHtml) {
   win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(docTitle)}</title><style>${PDF_PRINT_CSS}</style></head><body>${sectionsHtml}</body></html>`);
   win.document.close();
   awaitImages(win).then(() => {
+    if (win.closed) return;  // user may have closed the popup before images settled
     win.focus();
     win.print();
-  });
+  }).catch(() => {});
 }
 
-function exportNoteToPdf() {
-  const note = selectedNotebookNote();
-  if (!note) {
+async function exportNoteToPdf() {
+  if (!selectedNotebookNote()) {
     showFlash("Select a note to export.", "error");
     return;
   }
+  // Flush unsaved editor edits to state so the export reflects the current text.
+  await saveNotebookNote({ renderAfterSave: false }).catch(() => {});
+  const note = selectedNotebookNote();
+  if (!note) return;
   openNotePrintWindow(note.title || "Note", buildNoteExportSection(note));
 }
 
-function exportAllNotesToPdf() {
+async function exportAllNotesToPdf() {
   if (!state.notebookNotes.length) {
     showFlash("No notes to export.", "error");
     return;
+  }
+  // Flush the open note's unsaved edits before exporting the whole notebook.
+  if (selectedNotebookNote()) {
+    await saveNotebookNote({ renderAfterSave: false }).catch(() => {});
   }
   const sections = state.notebookNotes.map(buildNoteExportSection).join("");
   openNotePrintWindow("Notebook", sections);
@@ -2121,8 +2133,8 @@ els.notebookContainer.addEventListener("click", async (event) => {
       await deleteNotebookNote();
       return;
     }
-    if (exportButton) { exportNoteToPdf(); return; }
-    if (exportAllButton) { exportAllNotesToPdf(); return; }
+    if (exportButton) { await exportNoteToPdf(); return; }
+    if (exportAllButton) { await exportAllNotesToPdf(); return; }
     if (copyButton) {
       await copyMarkdownLinkForDocument(Number(copyButton.dataset.copyDocMarkdown));
       return;
