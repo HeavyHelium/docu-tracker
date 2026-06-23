@@ -384,7 +384,7 @@ class Database:
         ).fetchall()
         return [self.get_notebook_note(row[0]) for row in rows]
 
-    def add_notebook_note(self, title, body="", document_ids=None):
+    def add_notebook_note(self, title, body="", document_ids=None, topics=None):
         now = datetime.now(timezone.utc).isoformat()
         cursor = self.conn.execute(
             "INSERT INTO notebook_notes (title, body, created_at, updated_at) "
@@ -393,6 +393,7 @@ class Database:
         )
         note_id = cursor.lastrowid
         self.set_notebook_note_documents(note_id, document_ids or [], commit=False)
+        self.set_notebook_note_topics(note_id, topics or [], commit=False)
         self.conn.commit()
         return note_id
 
@@ -402,6 +403,7 @@ class Database:
         title=None,
         body=None,
         document_ids=None,
+        topics=None,
     ):
         fields = []
         params = []
@@ -421,11 +423,13 @@ class Database:
             )
         if document_ids is not None:
             self.set_notebook_note_documents(note_id, document_ids, commit=False)
-            if not fields:
-                self.conn.execute(
-                    "UPDATE notebook_notes SET updated_at = ? WHERE id = ?",
-                    (datetime.now(timezone.utc).isoformat(), note_id),
-                )
+        if topics is not None:
+            self.set_notebook_note_topics(note_id, topics, commit=False)
+        if not fields and (document_ids is not None or topics is not None):
+            self.conn.execute(
+                "UPDATE notebook_notes SET updated_at = ? WHERE id = ?",
+                (datetime.now(timezone.utc).isoformat(), note_id),
+            )
         self.conn.commit()
 
     def set_notebook_note_topics(self, note_id, topic_names, commit=True):

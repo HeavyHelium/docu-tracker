@@ -413,3 +413,17 @@ def test_remove_topic_deletes_note_topic_links(db):
     db.set_notebook_note_topics(note_id, ["Work"])
     db.remove_topic("Work")
     assert db.get_notebook_note(note_id)["topics"] == []
+
+
+def test_add_notebook_note_with_topics(db):
+    note_id = db.add_notebook_note("Note", body="b", topics=["Work"])
+    assert db.get_notebook_note(note_id)["topics"] == ["Work"]
+
+
+def test_update_notebook_note_replaces_topics(db):
+    note_id = db.add_notebook_note("Note", topics=["Work"])
+    db.update_notebook_note(note_id, topics=["Academic"])
+    note = db.get_notebook_note(note_id)
+    assert note["topics"] == ["Academic"]
+    # updated_at bumps even when only topics change
+    assert note["updated_at"] >= note["created_at"]
