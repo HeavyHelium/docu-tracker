@@ -539,6 +539,8 @@ class DocuTrackerWebApp:
             if not isinstance(raw, str):
                 raise HTTPError(400, "Notebook topics must be strings")
             name = raw.strip()
+            # Silently drop blank/whitespace-only names and duplicates; unknown
+            # topic names are tolerated here and ignored later by the DB layer.
             if name and name not in cleaned:
                 cleaned.append(name)
         return cleaned

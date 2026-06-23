@@ -675,6 +675,12 @@ def test_notebook_topics_round_trip(tmp_path, monkeypatch):
     )
     assert bad["status"].startswith("400")
 
+    bad_item = call_app(
+        app, "POST", "/api/notebook",
+        {"title": "Bad", "topics": [42]},
+    )
+    assert bad_item["status"].startswith("400")
+
 
 def test_web_command_invokes_server(tmp_path, monkeypatch):
     config_dir = tmp_path / "config"
