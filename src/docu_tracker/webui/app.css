@@ -1297,6 +1297,7 @@ body.notebook-app-mode .library-actions {
   justify-content: space-between;
   gap: 12px;
   align-items: start;
+  flex-wrap: wrap;
   margin-bottom: 12px;
 }
 
@@ -1721,7 +1722,8 @@ body.is-resizing-notebook {
   color: var(--danger);
 }
 
-.notebook-editor-actions {
+.notebook-editor-actions,
+.notebook-heading-actions {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;

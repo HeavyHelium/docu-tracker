@@ -684,8 +684,10 @@ function renderNotebook() {
               <p class="section-kicker">Notebook</p>
               <h3>Research Notes</h3>
             </div>
-            <button id="notebook-new" class="button button-primary" type="button">New</button>
-            <button id="notebook-export-all" class="button" type="button">Export all</button>
+            <div class="notebook-heading-actions">
+              <button id="notebook-new" class="button button-primary" type="button">New</button>
+              <button id="notebook-export-all" class="button" type="button">Export all</button>
+            </div>
           </div>
           <div class="notebook-note-list">
             ${state.notebookNotes.length ? state.notebookNotes.map((item) => `
