@@ -1,4 +1,6 @@
 import os
+import time
+
 import pytest
 from datetime import datetime, timezone
 from docu_tracker.db import Database
@@ -422,8 +424,10 @@ def test_add_notebook_note_with_topics(db):
 
 def test_update_notebook_note_replaces_topics(db):
     note_id = db.add_notebook_note("Note", topics=["Work"])
+    created_at = db.get_notebook_note(note_id)["created_at"]
+    time.sleep(0.001)  # ensure the clock advances past created_at
     db.update_notebook_note(note_id, topics=["Academic"])
     note = db.get_notebook_note(note_id)
     assert note["topics"] == ["Academic"]
     # updated_at bumps even when only topics change
-    assert note["updated_at"] >= note["created_at"]
+    assert note["updated_at"] > created_at
