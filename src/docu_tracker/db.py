@@ -528,6 +528,10 @@ class Database:
                 "INSERT OR IGNORE INTO document_topics (document_id, topic_id) VALUES (?, ?)",
                 (doc_id, other_id),
             )
+        self.conn.execute(
+            "DELETE FROM notebook_note_topics WHERE topic_id = ?",
+            (topic_id,),
+        )
         self.conn.execute("DELETE FROM topics WHERE id = ?", (topic_id,))
         self.conn.commit()
 

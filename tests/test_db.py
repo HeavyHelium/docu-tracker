@@ -405,3 +405,11 @@ def test_notebook_note_topics_survive_rename(db):
     db.set_notebook_note_topics(note_id, ["Work"])
     db.rename_topic("Work", "Career")
     assert db.get_notebook_note(note_id)["topics"] == ["Career"]
+
+
+def test_remove_topic_deletes_note_topic_links(db):
+    """Removing a topic should drop it from notes (no re-home to Other)."""
+    note_id = db.add_notebook_note("Note")
+    db.set_notebook_note_topics(note_id, ["Work"])
+    db.remove_topic("Work")
+    assert db.get_notebook_note(note_id)["topics"] == []
