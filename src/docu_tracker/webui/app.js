@@ -684,10 +684,7 @@ function renderNotebook() {
               <p class="section-kicker">Notebook</p>
               <h3>Research Notes</h3>
             </div>
-            <div class="notebook-heading-actions">
-              <button id="notebook-new" class="button button-primary" type="button">New</button>
-              <button id="notebook-export-all" class="button" type="button">Export all</button>
-            </div>
+            <button id="notebook-new" class="button button-primary" type="button">New</button>
           </div>
           <div class="notebook-note-list">
             ${state.notebookNotes.length ? state.notebookNotes.map((item) => `
@@ -1087,6 +1084,7 @@ function renderNotebookEditor(note) {
         <input id="notebook-title" class="notebook-title-input" type="text" value="${escapeAttribute(note.title)}" placeholder="Note title">
       </div>
       <div class="notebook-editor-actions">
+        <button id="notebook-export-all" class="button button-striped" type="button">Export all</button>
         <button id="notebook-export" class="button" type="button">Export PDF</button>
         <button id="notebook-save" class="button button-primary" type="button">Save</button>
         <button id="notebook-delete" class="button button-danger" type="button">Delete</button>
