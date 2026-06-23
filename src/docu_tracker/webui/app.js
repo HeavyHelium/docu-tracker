@@ -1098,6 +1098,17 @@ function renderNotebookEditor(note) {
         <div id="notebook-preview" class="notebook-markdown-preview">${renderMarkdown(note.body)}</div>
       </section>
     </div>
+    <div class="notebook-topics">
+      <p class="section-kicker">Topics</p>
+      <div class="notebook-topic-chips">
+        ${state.topics.length ? state.topics.map((topic) => `
+          <label class="notebook-topic-chip ${(note.topics || []).includes(topic.name) ? "selected" : ""}">
+            <input type="checkbox" data-note-topic="${escapeAttribute(topic.name)}" ${(note.topics || []).includes(topic.name) ? "checked" : ""}>
+            <span>${escapeHtml(topic.name)}</span>
+          </label>
+        `).join("") : `<span class="empty-state">No topics defined yet.</span>`}
+      </div>
+    </div>
     <div class="notebook-linked-files">
       <p class="section-kicker">Linked Files</p>
       ${noteReferencedDocuments(note).length ? noteReferencedDocuments(note).map((doc) => `
@@ -1211,6 +1222,7 @@ function currentNotebookPayload() {
     title: (titleInput?.value || "").trim() || "Untitled note",
     body: bodyInput?.value || "",
     document_ids: checkedRefs,
+    topics: note?.topics || [],
   };
 }
 
@@ -2062,6 +2074,18 @@ els.notebookContainer.addEventListener("input", (event) => {
 });
 
 els.notebookContainer.addEventListener("change", async (event) => {
+  if (event.target.matches("input[data-note-topic]")) {
+    const note = selectedNotebookNote();
+    if (!note) return;
+    const name = event.target.dataset.noteTopic;
+    const topics = new Set(note.topics || []);
+    if (event.target.checked) topics.add(name);
+    else topics.delete(name);
+    note.topics = Array.from(topics).sort();
+    event.target.closest(".notebook-topic-chip")?.classList.toggle("selected", event.target.checked);
+    scheduleNotebookAutosave();
+    return;
+  }
   if (!event.target.matches("input[data-note-ref-id]")) return;
   setNotebookReference(Number(event.target.dataset.noteRefId), event.target.checked);
   try {
