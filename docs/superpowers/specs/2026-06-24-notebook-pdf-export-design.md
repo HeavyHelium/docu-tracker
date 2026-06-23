@@ -124,9 +124,15 @@ have multiple topics, mirroring the existing `document_topics` many-to-many.
 - A topic selector in `renderNotebookEditor`, rendered as checkbox chips from
   `state.topics`, each checked when present in `note.topics` — consistent with
   the existing document topic-filter checkboxes.
-- `currentNotebookPayload()` includes the selected `topics`; toggling a topic
-  goes through the same autosave path as other edits (the
-  `els.notebookContainer` change/input handlers).
+- `currentNotebookPayload()` includes the selected `topics`. Source of truth
+  follows the existing reference-checkbox flow: toggling a topic checkbox mutates
+  `note.topics` on the in-memory note object (like `setNotebookReference` does
+  for `document_ids`), and the payload reads from there.
+- Autosave is **not** automatic for the new checkboxes: the existing `change`
+  handler early-returns unless the target matches `input[data-note-ref-id]`, and
+  the `input` handler early-returns unless it matches `#notebook-title,
+  #notebook-body`. Add a branch to the `change` handler for the topic checkboxes
+  that updates `note.topics` and triggers the save path.
 - Note-list cards (`renderNotebook`) surface the note's topics.
 
 ## Testing
