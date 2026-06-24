@@ -615,6 +615,39 @@ def test_last_session_close_triggers_shutdown(tmp_path, monkeypatch):
     assert shutdown_calls == [True]
 
 
+def test_unknown_session_close_does_not_trigger_shutdown(tmp_path, monkeypatch):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    app = DocuTrackerWebApp(config_dir=str(config_dir), cwd=str(tmp_path))
+
+    shutdown_calls = []
+
+    class ImmediateTimer:
+        def __init__(self, interval, callback):
+            self.callback = callback
+            self.daemon = False
+
+        def start(self):
+            self.callback()
+
+        def cancel(self):
+            pass
+
+    app.shutdown_callback = lambda: shutdown_calls.append(True)
+
+    with patch("docu_tracker.web.threading.Timer", ImmediateTimer):
+        close_response = call_app(
+            app,
+            "POST",
+            "/api/session/close",
+            {"session_id": "stale-tab"},
+        )
+
+    assert close_response["status"].startswith("200")
+    assert shutdown_calls == []
+
+
 
 def test_serve_web_app_falls_back_when_port_is_busy(tmp_path):
     calls = []

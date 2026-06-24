@@ -920,6 +920,7 @@ function renderInlineMarkdown(value) {
     return token;
   };
   text = text
+    .replace(/\\\[([\s\S]+?)\\\]/g, stashMath)
     .replace(/\\\(([\s\S]+?)\\\)/g, stashMath)
     .replace(/\$(?!\$)([^\n$]+?)\$/g, stashMath);
 
@@ -945,6 +946,99 @@ function renderInlineMarkdown(value) {
   return text;
 }
 
+function splitMarkdownTableRow(line) {
+  const trimmed = String(line || "").trim();
+  const content = trimmed.startsWith("|") && trimmed.endsWith("|")
+    ? trimmed.slice(1, -1)
+    : trimmed;
+  const cells = [];
+  let cell = "";
+  let escaped = false;
+  for (const char of content) {
+    if (escaped) {
+      cell += char;
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      cell += char;
+      continue;
+    }
+    if (char === "|") {
+      cells.push(cell.trim());
+      cell = "";
+      continue;
+    }
+    cell += char;
+  }
+  cells.push(cell.trim());
+  return cells;
+}
+
+function isMarkdownTableRow(line) {
+  return String(line || "").includes("|") && splitMarkdownTableRow(line).length >= 2;
+}
+
+function isMarkdownTableSeparator(line) {
+  const cells = splitMarkdownTableRow(line);
+  return cells.length >= 2 && cells.every((cell) => /^:?-{3,}:?$/.test(cell.replace(/\s+/g, "")));
+}
+
+function tableAlignment(separatorCell) {
+  const value = separatorCell.replace(/\s+/g, "");
+  if (value.startsWith(":") && value.endsWith(":")) return "center";
+  if (value.endsWith(":")) return "right";
+  return "left";
+}
+
+function renderMarkdownTable(headerLine, separatorLine, bodyLines) {
+  const headers = splitMarkdownTableRow(headerLine);
+  const alignments = splitMarkdownTableRow(separatorLine).map(tableAlignment);
+  const rows = bodyLines.map(splitMarkdownTableRow);
+  const columnCount = Math.max(headers.length, alignments.length, ...rows.map((row) => row.length));
+  const cellStyle = (index) => ` style="text-align: ${alignments[index] || "left"}"`;
+  const headerHtml = Array.from({ length: columnCount }, (_item, index) => (
+    `<th${cellStyle(index)}>${renderInlineMarkdown(headers[index] || "")}</th>`
+  )).join("");
+  const bodyHtml = rows.map((row) => (
+    `<tr>${Array.from({ length: columnCount }, (_item, index) => (
+      `<td${cellStyle(index)}>${renderInlineMarkdown(row[index] || "")}</td>`
+    )).join("")}</tr>`
+  )).join("");
+  return `<div class="notebook-table-wrap"><table>${bodyHtml ? `<thead><tr>${headerHtml}</tr></thead><tbody>${bodyHtml}</tbody>` : `<tbody><tr>${headerHtml}</tr></tbody>`}</table></div>`;
+}
+
+function looksLikeTex(value) {
+  return /\\[a-zA-Z]+|[_^]|[=<>≈≤≥]|\\[,;! ]/.test(String(value || ""));
+}
+
+function oneLineDisplayMath(trimmed) {
+  const delimited = trimmed.match(/^\$\$\s*([\s\S]+?)\s*\$\$$/)
+    || trimmed.match(/^\\\[\s*([\s\S]+?)\s*\\\]$/);
+  if (delimited) return delimited[1];
+
+  const bareBracket = trimmed.match(/^\[\s*([\s\S]+?)\s*\]$/);
+  if (bareBracket && looksLikeTex(bareBracket[1])) return bareBracket[1];
+  return null;
+}
+
+function displayMathStart(trimmed) {
+  const match = trimmed.match(/^(\$\$|\\\[|\[)\s*([\s\S]*)$/);
+  if (!match) return null;
+  if (match[1] === "[" && match[2].trim() && !looksLikeTex(match[2])) return null;
+  return {
+    closeDelimiter: match[1] === "$$" ? "$$" : match[1] === "\\[" ? "\\]" : "]",
+    content: match[2],
+  };
+}
+
+function displayMathCloseMatch(line, closeDelimiter) {
+  if (closeDelimiter === "$$") return line.match(/^(.*?)\s*\$\$\s*$/);
+  if (closeDelimiter === "\\]") return line.match(/^(.*?)\s*\\\]\s*$/);
+  return line.match(/^(.*?)\s*\]\s*$/);
+}
+
 function renderMarkdown(value) {
   const lines = String(value || "").split(/\r?\n/);
   const html = [];
@@ -954,6 +1048,7 @@ function renderMarkdown(value) {
   let mathLines = [];
   let inCode = false;
   let inMath = false;
+  let mathCloseDelimiter = null;
 
   const flushParagraph = () => {
     if (!paragraph.length) return;
@@ -981,7 +1076,8 @@ function renderMarkdown(value) {
     mathLines = [];
   };
 
-  for (const line of lines) {
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex];
     const trimmed = line.trim();
     if (trimmed.startsWith("```")) {
       if (inCode) {
@@ -999,19 +1095,34 @@ function renderMarkdown(value) {
       continue;
     }
 
-    if (trimmed === "$$" || trimmed === "\\[" || trimmed === "\\]") {
-      if (inMath) {
+    if (inMath) {
+      const closeMatch = displayMathCloseMatch(line, mathCloseDelimiter);
+      if (closeMatch) {
+        if (closeMatch[1].trim()) mathLines.push(closeMatch[1]);
         flushMath();
         inMath = false;
-      } else {
-        flushParagraph();
-        flushList();
-        inMath = true;
+        mathCloseDelimiter = null;
+        continue;
       }
+      mathLines.push(line);
       continue;
     }
-    if (inMath) {
-      mathLines.push(line);
+
+    const oneLineMath = oneLineDisplayMath(trimmed);
+    if (oneLineMath !== null) {
+      flushParagraph();
+      flushList();
+      html.push(`<div class="math-display">${escapeHtml(oneLineMath)}</div>`);
+      continue;
+    }
+
+    const mathStart = displayMathStart(trimmed);
+    if (mathStart) {
+      flushParagraph();
+      flushList();
+      inMath = true;
+      mathCloseDelimiter = mathStart.closeDelimiter;
+      if (mathStart.content.trim()) mathLines.push(mathStart.content);
       continue;
     }
 
@@ -1021,11 +1132,23 @@ function renderMarkdown(value) {
       continue;
     }
 
-    const oneLineMath = trimmed.match(/^\$\$\s*(.+?)\s*\$\$$/) || trimmed.match(/^\\\[\s*(.+?)\s*\\\]$/);
-    if (oneLineMath) {
+    if (
+      isMarkdownTableRow(trimmed)
+      && lineIndex + 1 < lines.length
+      && isMarkdownTableSeparator(lines[lineIndex + 1].trim())
+    ) {
       flushParagraph();
       flushList();
-      html.push(`<div class="math-display">${escapeHtml(oneLineMath[1])}</div>`);
+      const headerLine = trimmed;
+      const separatorLine = lines[lineIndex + 1].trim();
+      const bodyLines = [];
+      lineIndex += 2;
+      while (lineIndex < lines.length && isMarkdownTableRow(lines[lineIndex].trim())) {
+        bodyLines.push(lines[lineIndex].trim());
+        lineIndex += 1;
+      }
+      lineIndex -= 1;
+      html.push(renderMarkdownTable(headerLine, separatorLine, bodyLines));
       continue;
     }
 
@@ -1090,24 +1213,42 @@ function ensureMathStyles() {
 }
 
 function typesetMath(container) {
-  if (!container || !window.MathJax || !window.MathJax.tex2svgPromise) return;
+  typesetMathAsync(container);
+}
+
+// Same as typesetMath, but resolves once every node has settled so callers that
+// serialize the rendered HTML (e.g. the PDF popup) can wait for the SVG output.
+function typesetMathAsync(container) {
+  if (!container || !window.MathJax || !window.MathJax.tex2svgPromise) return Promise.resolve();
   ensureMathStyles();
   const nodes = container.querySelectorAll(
     ".math-inline:not([data-math-done]), .math-display:not([data-math-done])"
   );
-  nodes.forEach((node) => {
+  return Promise.all(Array.from(nodes).map((node) => {
     const tex = node.textContent;
     const display = node.classList.contains("math-display");
-    window.MathJax.tex2svgPromise(tex, { display })
+    return renderTexNode(node, tex, display)
+      .catch(() => renderTexNode(node, tex.replace(/\\text\{([^{}]+)\}/g, (_match, content) => `\\mathrm{${content.replace(/\s+/g, "\\ ")}}`), display))
+      .catch(() => {});
+  }));
+}
+
+// MathJax's SVG output references shared glyph styles; grab them as CSS text so the
+// detached PDF popup (which never loads MathJax) can render the math correctly.
+function mathStylesheetCss() {
+  if (!window.MathJax || !window.MathJax.svgStylesheet) return "";
+  return window.MathJax.svgStylesheet().textContent || "";
+}
+
+function renderTexNode(node, tex, display) {
+  return window.MathJax.tex2svgPromise(tex, { display })
       .then((wrapper) => {
         const svg = wrapper.querySelector("svg");
-        if (!svg) return;
+        if (!svg) throw new Error("MathJax did not produce SVG");
         node.textContent = "";
         node.appendChild(svg);
         node.setAttribute("data-math-done", "");
-      })
-      .catch(() => {});
-  });
+      });
 }
 
 function notebookPreviewElement() {
@@ -1116,11 +1257,36 @@ function notebookPreviewElement() {
 
 document.addEventListener("mathjax-ready", () => typesetMath(notebookPreviewElement()));
 
+function scrollRatio(element) {
+  const maxScroll = element.scrollHeight - element.clientHeight;
+  return maxScroll > 0 ? element.scrollTop / maxScroll : 0;
+}
+
+function setScrollRatio(element, ratio) {
+  const maxScroll = element.scrollHeight - element.clientHeight;
+  element.scrollTop = maxScroll > 0 ? maxScroll * ratio : 0;
+}
+
+// Editor and preview scroll independently; these buttons let the user align one to
+// the other on demand instead of keeping them permanently coupled.
+function alignNotebookPanes(direction) {
+  const bodyInput = els.notebookContainer.querySelector("#notebook-body");
+  const preview = els.notebookContainer.querySelector("#notebook-preview");
+  if (!bodyInput || !preview) return;
+  if (direction === "editor-to-preview") {
+    setScrollRatio(bodyInput, scrollRatio(preview));
+  } else {
+    setScrollRatio(preview, scrollRatio(bodyInput));
+  }
+}
+
 function updateNotebookPreview() {
   const bodyInput = els.notebookContainer.querySelector("#notebook-body");
   const preview = els.notebookContainer.querySelector("#notebook-preview");
   if (!bodyInput || !preview) return;
-  preview.innerHTML = renderMarkdown(bodyInput.value);
+  const currentPreviewRatio = scrollRatio(preview);
+  preview.innerHTML = `<div class="notebook-preview-document">${renderMarkdown(bodyInput.value)}</div>`;
+  setScrollRatio(preview, currentPreviewRatio);
   typesetMath(preview);
 }
 
@@ -1151,8 +1317,14 @@ function renderNotebookEditor(note) {
       </label>
       <div class="notebook-resizer notebook-compose-resizer" data-resizer="notebook-compose" role="separator" aria-orientation="vertical" aria-label="Resize markdown preview"></div>
       <section class="notebook-preview-panel">
-        <p class="section-kicker">Preview</p>
-        <div id="notebook-preview" class="notebook-markdown-preview">${renderMarkdown(note.body)}</div>
+        <div class="notebook-preview-header">
+          <p class="section-kicker">Preview</p>
+          <div class="notebook-scroll-align" role="group" aria-label="Align pane scrolling">
+            <button type="button" id="notebook-align-editor" class="notebook-align-button" title="Scroll the editor to the preview's position">↧ Match preview</button>
+            <button type="button" id="notebook-align-preview" class="notebook-align-button" title="Scroll the preview to the editor's position">Match editor ↧</button>
+          </div>
+        </div>
+        <div id="notebook-preview" class="notebook-markdown-preview"><div class="notebook-preview-document">${renderMarkdown(note.body)}</div></div>
       </section>
     </div>
     <div class="notebook-topics">
@@ -1201,18 +1373,36 @@ function buildNoteExportSection(note) {
 
 // Inlined into the print-only popup document (light theme, paper-friendly).
 const PDF_PRINT_CSS = `
-  body { font-family: Georgia, "Times New Roman", serif; color: #111; margin: 2.5rem; line-height: 1.55; }
-  h1 { font-size: 1.7rem; margin: 0 0 0.4rem; }
-  h2, h3 { margin-top: 1.4rem; }
-  img { max-width: 100%; height: auto; }
-  .pdf-note-topics { margin: 0 0 1rem; }
+  :root { color-scheme: light; }
+  body { font-family: Georgia, "Times New Roman", serif; color: #1a1a1a; background: #fff; margin: 0; padding: 3rem 1.5rem; line-height: 1.7; font-size: 1.06rem; }
+  .pdf-document { max-width: 42rem; margin: 0 auto; }
+  .pdf-document, .pdf-document * { overflow-wrap: break-word; word-wrap: break-word; }
+  h1, h2, h3, h4, h5 { font-family: Georgia, "Iowan Old Style", serif; line-height: 1.2; font-weight: 700; }
+  h1 { font-size: 2.1rem; margin: 0 0 0.6rem; }
+  h2 { font-size: 1.7rem; margin: 2rem 0 0.5rem; }
+  h3 { font-size: 1.42rem; margin: 1.7rem 0 0.4rem; }
+  h4 { font-size: 1.2rem; margin: 1.5rem 0 0.35rem; }
+  h5 { font-size: 1.05rem; margin: 1.3rem 0 0.3rem; text-transform: uppercase; letter-spacing: 0.03em; color: #555; }
+  p { margin: 0 0 1rem; }
+  a { color: #0b6e62; word-break: break-word; }
+  img { max-width: 100%; height: auto; display: block; margin: 1rem auto; }
+  .pdf-note-topics { margin: 0 0 1.2rem; }
   .pdf-note-topics span { display: inline-block; font-size: 0.75rem; padding: 0.1rem 0.5rem; margin-right: 0.3rem; border: 1px solid #999; border-radius: 999px; }
-  .pdf-linked { margin-top: 1.5rem; border-top: 1px solid #ccc; padding-top: 0.6rem; }
+  .pdf-linked { margin-top: 1.8rem; border-top: 1px solid #ccc; padding-top: 0.8rem; }
   .pdf-note { break-after: page; }
   .pdf-note:last-child { break-after: auto; }
-  blockquote { border-left: 3px solid #ccc; margin-left: 0; padding-left: 1rem; color: #444; }
+  blockquote { border-left: 3px solid #ccc; margin: 1rem 0; padding: 0.2rem 0 0.2rem 1rem; color: #444; }
+  ul, ol { padding-left: 1.4rem; margin: 0 0 1rem; }
+  li { margin: 0.25rem 0; }
   pre, code { font-family: "SFMono-Regular", Consolas, monospace; }
-  pre { background: #f5f5f5; padding: 0.75rem; overflow-x: auto; }
+  code { font-size: 0.9em; background: #f0f0f0; padding: 0.1em 0.35em; border-radius: 4px; }
+  pre { background: #f5f5f5; padding: 0.75rem; border-radius: 8px; overflow-x: auto; }
+  pre code { background: none; padding: 0; }
+  table { width: 100%; border-collapse: collapse; margin: 0 0 1rem; font-size: 0.96rem; }
+  th, td { border: 1px solid #ddd; padding: 0.4rem 0.6rem; text-align: left; vertical-align: top; }
+  th { background: #f3f3f3; }
+  .math-display { overflow-x: auto; text-align: center; margin: 1.2rem 0; }
+  .math-inline svg, .math-display svg { max-width: 100%; }
 `;
 
 function awaitImages(win) {
@@ -1231,13 +1421,21 @@ function awaitImages(win) {
 // `sectionsHtml` MUST already be escaped/sanitized by the caller (see
 // buildNoteExportSection); PDF_PRINT_CSS is a static constant. Both are written
 // verbatim into the popup document, so never pass unsanitized user input here.
-function openNotePrintWindow(docTitle, sectionsHtml) {
+async function openNotePrintWindow(docTitle, sectionsHtml) {
+  // Open synchronously so the popup isn't blocked, then render math before writing.
   const win = window.open("", "_blank");
   if (!win) {
     showFlash("Could not open the print window — allow popups for this site.", "error");
     return;
   }
-  win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(docTitle)}</title><style>${PDF_PRINT_CSS}</style></head><body>${sectionsHtml}</body></html>`);
+  // MathJax isn't loaded in the popup, so pre-render the LaTeX to SVG here and embed
+  // the result (plus MathJax's glyph stylesheet) into the printed document.
+  const staged = document.createElement("div");
+  staged.className = "pdf-document";
+  staged.innerHTML = sectionsHtml;
+  await typesetMathAsync(staged).catch(() => {});
+  const css = `${PDF_PRINT_CSS}${mathStylesheetCss()}`;
+  win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(docTitle)}</title><style>${css}</style></head><body>${staged.outerHTML}</body></html>`);
   win.document.close();
   awaitImages(win).then(() => {
     if (win.closed) return;  // user may have closed the popup before images settled
@@ -1255,7 +1453,7 @@ async function exportNoteToPdf() {
   await saveNotebookNote({ renderAfterSave: false }).catch(() => {});
   const note = selectedNotebookNote();
   if (!note) return;
-  openNotePrintWindow(note.title || "Note", buildNoteExportSection(note));
+  await openNotePrintWindow(note.title || "Note", buildNoteExportSection(note));
 }
 
 async function exportAllNotesToPdf() {
@@ -1268,7 +1466,7 @@ async function exportAllNotesToPdf() {
     await saveNotebookNote({ renderAfterSave: false }).catch(() => {});
   }
   const sections = state.notebookNotes.map(buildNoteExportSection).join("");
-  openNotePrintWindow("Notebook", sections);
+  await openNotePrintWindow("Notebook", sections);
 }
 
 function referenceSearchMatches(doc, term) {
@@ -2158,6 +2356,8 @@ els.notebookContainer.addEventListener("click", async (event) => {
   const deleteButton = event.target.closest("#notebook-delete");
   const exportButton = event.target.closest("#notebook-export");
   const exportAllButton = event.target.closest("#notebook-export-all");
+  const alignEditorButton = event.target.closest("#notebook-align-editor");
+  const alignPreviewButton = event.target.closest("#notebook-align-preview");
   const openButton = event.target.closest("button[data-notebook-open-doc]");
   const copyButton = event.target.closest("button[data-copy-doc-markdown]");
   const markdownButton = event.target.closest("button[data-markdown-action]");
@@ -2188,6 +2388,8 @@ els.notebookContainer.addEventListener("click", async (event) => {
     }
     if (exportButton) { await exportNoteToPdf(); return; }
     if (exportAllButton) { await exportAllNotesToPdf(); return; }
+    if (alignEditorButton) { alignNotebookPanes("editor-to-preview"); return; }
+    if (alignPreviewButton) { alignNotebookPanes("preview-to-editor"); return; }
     if (copyButton) {
       await copyMarkdownLinkForDocument(Number(copyButton.dataset.copyDocMarkdown));
       return;

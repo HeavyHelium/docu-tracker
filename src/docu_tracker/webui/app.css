@@ -1508,6 +1508,38 @@ body.is-resizing-notebook {
   align-content: stretch;
 }
 
+.notebook-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.notebook-scroll-align {
+  display: flex;
+  gap: 6px;
+}
+
+.notebook-align-button {
+  border: 1px solid rgba(50, 71, 67, 0.16);
+  border-radius: 999px;
+  background: rgba(255, 251, 244, 0.8);
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 700;
+  padding: 3px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.notebook-align-button:hover {
+  background: rgba(11, 110, 98, 0.1);
+  border-color: rgba(11, 110, 98, 0.3);
+  color: var(--accent-strong);
+}
+
 .notebook-markdown-preview {
   min-height: 360px;
   max-height: 520px;
@@ -1515,8 +1547,18 @@ body.is-resizing-notebook {
   border: 1px solid rgba(50, 71, 67, 0.1);
   border-radius: 16px;
   background: rgba(255, 251, 244, 0.72);
-  padding: 16px 12px;
+  padding: clamp(14px, 3vw, 26px);
   line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.notebook-preview-document {
+  width: min(100%, 74ch);
+  margin: 0 auto;
+}
+
+.notebook-preview-document > :last-child {
+  margin-bottom: 0;
 }
 
 .notebook-markdown-preview h3,
@@ -1542,8 +1584,43 @@ body.is-resizing-notebook {
 .notebook-markdown-preview p,
 .notebook-markdown-preview ul,
 .notebook-markdown-preview blockquote,
-.notebook-markdown-preview pre {
+.notebook-markdown-preview pre,
+.notebook-table-wrap {
   margin: 0 0 12px;
+}
+
+.notebook-table-wrap {
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid rgba(50, 71, 67, 0.12);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.42);
+}
+
+.notebook-markdown-preview table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.94rem;
+  table-layout: fixed;
+}
+
+.notebook-markdown-preview th,
+.notebook-markdown-preview td {
+  padding: 9px 10px;
+  border-bottom: 1px solid rgba(50, 71, 67, 0.12);
+  vertical-align: top;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+.notebook-markdown-preview th {
+  background: rgba(11, 110, 98, 0.08);
+  color: var(--accent-strong);
+  font-weight: 800;
+}
+
+.notebook-markdown-preview tbody tr:last-child td {
+  border-bottom: 0;
 }
 
 .notebook-markdown-preview ul {
@@ -1556,6 +1633,7 @@ body.is-resizing-notebook {
   background: rgba(11, 110, 98, 0.06);
   border-radius: 10px;
   color: var(--muted);
+  overflow-wrap: anywhere;
 }
 
 .notebook-markdown-preview code {
@@ -1571,6 +1649,7 @@ body.is-resizing-notebook {
   border-radius: 12px;
   background: rgba(36, 53, 48, 0.08);
   padding: 12px;
+  white-space: pre-wrap;
 }
 
 .notebook-markdown-preview pre code {
@@ -1678,6 +1757,17 @@ body.is-resizing-notebook {
   margin: 0 0 12px;
   white-space: pre-wrap;
   text-align: center;
+  overflow-wrap: anywhere;
+}
+
+/* Keep rendered equations inside the column instead of clipping wide display math. */
+.math-display svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.math-inline svg {
+  max-width: 100%;
 }
 
 .notebook-body-input {

@@ -465,8 +465,9 @@ class DocuTrackerWebApp:
             raise HTTPError(400, "session_id is required")
         should_schedule_shutdown = False
         with self._session_lock:
+            had_session = session_id in self._session_ids
             self._session_ids.discard(session_id)
-            if not self._session_ids:
+            if had_session and not self._session_ids:
                 should_schedule_shutdown = True
         if should_schedule_shutdown:
             self._schedule_shutdown()

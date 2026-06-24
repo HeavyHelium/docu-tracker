@@ -261,7 +261,7 @@
         </aside>
       </main>
     </div>
-    <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js" async></script>
     <script>
       window.MathJax = {
         tex: {
@@ -275,7 +275,7 @@
         startup: {
           typeset: false,
           pageReady: () =>
-            window.MathJax.startup.defaultReady().then(() => {
+            window.MathJax.startup.defaultPageReady().then(() => {
               document.dispatchEvent(new Event("mathjax-ready"));
             })
         }
