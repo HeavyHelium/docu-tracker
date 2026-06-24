@@ -135,7 +135,26 @@ The web UI provides:
 - scan controls for configured paths or a selected path
 - metadata rescan for all documents or a single document
 - interactive topic & document graph view with dynamic filtering, selection highlighting, and freeze physics controls
+- a research notebook for durable synthesis notes with a live markdown preview (see below)
 
+#### Research notebook
+
+The notebook tab is a split markdown editor with a live preview. Alongside standard
+markdown it supports:
+
+- **LaTeX math** — inline `$…$` / `\(…\)` and display `$$…$$` / `\[…\]`, rendered with MathJax.
+- **Figures with captions** — a standalone image whose markdown has a title becomes a
+  centered figure with the title as the caption:
+  `![alt](image.png "Figure 1: my caption")`.
+- **Image sizing** — append `{width=320}` or `{width=60%}` (and optional `height=…`) to any
+  image, e.g. `![alt](image.png "Caption"){width=400}`.
+- **Colored text** — `:red[text]` or `:#0b6e62[text]` (CSS color names or hex).
+- **Tables, task lists, code blocks, blockquotes**, and the formatting toolbar above the editor.
+- **Scroll sync** — the editor and preview scroll independently; use the `→` / `←` control on
+  the divider to align one pane to the other.
+- **Export** — *Open alone* opens the note(s) as a standalone, print-ready page; click the
+  download icon and choose "Save as PDF" as the destination. *Export all* does the same for the
+  whole notebook.
 
 If you want the web UI to work no matter which directory you launch it from, prefer storing your key and default scan paths in `~/.docu-tracker/config.yaml` instead of relying on a repo-local `.env`.
 
