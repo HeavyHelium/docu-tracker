@@ -1,5 +1,8 @@
 const state = {
   documents: [],
+  notebookNotes: [],
+  selectedNoteId: null,
+  notebookReferenceSearch: "",
   topics: [],
   statuses: [],
   scanPaths: [],
@@ -22,9 +25,12 @@ const state = {
 
 const WAITING_TO_SCAN_POLL_MS = 15 * 60 * 1000;
 const DETAIL_AUTOSAVE_DELAY_MS = 700;
+const MAX_NOTEBOOK_IMAGE_BYTES = 10 * 1024 * 1024;
 let detailAutosaveTimer = null;
 let detailAutosaveRequestId = 0;
 let saveButtonResetTimer = null;
+let notebookAutosaveTimer = null;
+let notebookSaveStatusResetTimer = null;
 
 const STATUS_VISUALS = {
   unread: { label: "Unread", color: "#e6b146" },
@@ -90,7 +96,9 @@ const els = {
   activityLog: document.getElementById("activity-log"),
   flash: document.getElementById("flash"),
   viewToggleBtn: document.getElementById("view-toggle-btn"),
+  notebookToggleBtn: document.getElementById("notebook-toggle-btn"),
   graphContainer: document.getElementById("graph-container"),
+  notebookContainer: document.getElementById("notebook-container"),
   tablePanel: document.querySelector(".table-panel"),
   freezePhysicsCheckbox: document.getElementById("freeze-physics-checkbox"),
 };
@@ -127,6 +135,7 @@ async function loadState(keepSelection = true) {
   state.topics = payload.topics;
   state.statuses = payload.statuses;
   state.scanPaths = payload.scan_paths;
+  state.notebookNotes = payload.notebook_notes || [];
   state.waitingToScan = null;
   state.oldestWaitingModifiedAt = null;
   state.waitingToScanLoading = true;
@@ -139,6 +148,7 @@ async function loadState(keepSelection = true) {
   renderFilters();
   renderStats();
   renderDocuments();
+  renderNotebook();
   renderDetail();
   renderTopics();
   loadWaitingToScan();
@@ -516,6 +526,9 @@ function renderDocuments() {
   if (state.viewMode === "graph") {
     renderGraph();
   }
+  if (state.viewMode === "notebook") {
+    renderNotebook();
+  }
   if (!docs.length) {
     els.docsBody.innerHTML = `
       <tr>
@@ -634,6 +647,1064 @@ function renderTopics() {
       </label>
     </div>
   `).join("");
+}
+
+
+function selectedNotebookNote() {
+  return state.notebookNotes.find((note) => note.id === state.selectedNoteId) || null;
+}
+
+function noteReferencedDocuments(note) {
+  const ids = new Set(note?.document_ids || []);
+  return state.documents.filter((doc) => ids.has(doc.id));
+}
+
+function notebookExcerpt(note) {
+  const body = (note.body || "").trim().replace(/\s+/g, " ");
+  if (!body) return "No notes yet";
+  return body.length > 120 ? body.slice(0, 117) + "..." : body;
+}
+
+function renderNotebook() {
+  if (!state.selectedNoteId && state.notebookNotes.length) {
+    state.selectedNoteId = state.notebookNotes[0].id;
+  }
+  if (state.selectedNoteId && !state.notebookNotes.some((note) => note.id === state.selectedNoteId)) {
+    state.selectedNoteId = state.notebookNotes[0]?.id || null;
+  }
+
+  const note = selectedNotebookNote();
+  els.notebookContainer.innerHTML = `
+    <div class="notebook-layout">
+      ${note ? renderNotebookReferenceSearch(note) : `<section class="notebook-reference-strip"><div class="empty-state">Create or select a note to search file references.</div></section>`}
+      <div class="notebook-panes">
+        <section class="notebook-list-panel">
+          <div class="notebook-panel-heading">
+            <div>
+              <p class="section-kicker">Notebook</p>
+              <h3>Research Notes</h3>
+            </div>
+            <button id="notebook-new" class="button button-primary" type="button">New</button>
+          </div>
+          <div class="notebook-note-list">
+            ${state.notebookNotes.length ? state.notebookNotes.map((item) => `
+              <button type="button" class="notebook-note-card ${item.id === state.selectedNoteId ? "selected" : ""}" data-note-id="${item.id}">
+                <strong>${escapeHtml(item.title || "Untitled note")}</strong>
+                <span>${escapeHtml(notebookExcerpt(item))}</span>
+                <small>${item.document_ids.length} reference${item.document_ids.length === 1 ? "" : "s"} · ${formatDateTime(item.updated_at)}</small>
+                ${(item.topics || []).length ? `<span class="notebook-card-topics">${item.topics.map((t) => `<span class="notebook-card-topic">${escapeHtml(t)}</span>`).join("")}</span>` : ""}
+              </button>
+            `).join("") : `<div class="empty-state">Create a note to start a research map around the files in this tracker.</div>`}
+          </div>
+        </section>
+        <div class="notebook-resizer" data-resizer="notebook-list" role="separator" aria-orientation="vertical" aria-label="Resize note list"></div>
+        <section class="notebook-editor-panel">
+          ${note ? renderNotebookEditor(note) : renderNotebookEmptyEditor()}
+        </section>
+      </div>
+    </div>
+  `;
+  typesetMath(els.notebookContainer.querySelector("#notebook-preview"));
+}
+
+
+function renderNotebookEmptyEditor() {
+  return `
+    <div class="notebook-empty-editor empty-state">
+      <strong>No notebook entry selected.</strong>
+      <span>Use New Note to create a durable research note that can reference tracked files.</span>
+    </div>
+  `;
+}
+
+
+
+function safeMarkdownUrl(value) {
+  const trimmed = String(value || "").trim();
+  const lowered = trimmed.toLowerCase();
+  if (lowered.startsWith("javascript:") || lowered.startsWith("data:")) return "#";
+  return trimmed;
+}
+
+function markdownToolbarHtml() {
+  const tools = [
+    ["bold", "B"],
+    ["italic", "I"],
+    ["h1", "H1"],
+    ["h2", "H2"],
+    ["list", "List"],
+    ["task", "Task"],
+    ["quote", "Quote"],
+    ["inline-code", "</>"],
+    ["code-block", "Code block"],
+    ["link", "Link"],
+    ["inline-math", "pi"],
+    ["display-math", "$$"],
+    ["image", "Image"],
+    ["color", "Color"],
+    ["rule", "-"],
+  ];
+  return `
+    <div class="notebook-markdown-toolbar" aria-label="Markdown formatting">
+      ${tools.map(([action, label]) => `
+        <button type="button" data-markdown-action="${action}" title="${escapeAttribute(label)}">${escapeHtml(label)}</button>
+      `).join("")}
+    </div>
+  `;
+}
+
+function selectedTextareaRange(textarea) {
+  return {
+    start: textarea.selectionStart,
+    end: textarea.selectionEnd,
+    selected: textarea.value.slice(textarea.selectionStart, textarea.selectionEnd),
+  };
+}
+
+function replaceTextareaRange(textarea, nextValue, selectionStart, selectionEnd, options = {}) {
+  const { autosave = true } = options;
+  const { start, end } = selectedTextareaRange(textarea);
+  // Setting .value collapses the caret to the end and focus() then jumps the view
+  // there; capture the scroll position and restore it after re-selecting.
+  const scrollTop = textarea.scrollTop;
+  textarea.value = textarea.value.slice(0, start) + nextValue + textarea.value.slice(end);
+  textarea.focus({ preventScroll: true });
+  textarea.setSelectionRange(start + selectionStart, start + selectionEnd);
+  textarea.scrollTop = scrollTop;
+  updateNotebookPreview();
+  if (autosave) scheduleNotebookAutosave();
+}
+
+function prefixSelectedLines(textarea, prefix) {
+  const { start, end } = selectedTextareaRange(textarea);
+  const lineStart = textarea.value.lastIndexOf("\n", start - 1) + 1;
+  const lineEndIndex = textarea.value.indexOf("\n", end);
+  const lineEnd = lineEndIndex === -1 ? textarea.value.length : lineEndIndex;
+  const block = textarea.value.slice(lineStart, lineEnd);
+  const nextBlock = block.split("\n").map((line) => prefix + line).join("\n");
+  const scrollTop = textarea.scrollTop;
+  textarea.value = textarea.value.slice(0, lineStart) + nextBlock + textarea.value.slice(lineEnd);
+  textarea.focus({ preventScroll: true });
+  textarea.setSelectionRange(lineStart, lineStart + nextBlock.length);
+  textarea.scrollTop = scrollTop;
+  updateNotebookPreview();
+  scheduleNotebookAutosave();
+}
+
+function applyMarkdownToolbarAction(action) {
+  const textarea = els.notebookContainer.querySelector("#notebook-body");
+  if (!textarea) return;
+  const { selected } = selectedTextareaRange(textarea);
+  const text = selected || "text";
+
+  if (action === "bold") return replaceTextareaRange(textarea, `**${text}**`, 2, 2 + text.length);
+  if (action === "italic") return replaceTextareaRange(textarea, `*${text}*`, 1, 1 + text.length);
+  if (action === "inline-code") return replaceTextareaRange(textarea, `\`${text}\``, 1, 1 + text.length);
+  if (action === "inline-math") return replaceTextareaRange(textarea, `$${selected || "x"}$`, 1, 1 + (selected || "x").length);
+  if (action === "h1") return prefixSelectedLines(textarea, "# ");
+  if (action === "h2") return prefixSelectedLines(textarea, "## ");
+  if (action === "list") return prefixSelectedLines(textarea, "- ");
+  if (action === "task") return prefixSelectedLines(textarea, "- [ ] ");
+  if (action === "quote") return prefixSelectedLines(textarea, "> ");
+  if (action === "rule") return replaceTextareaRange(textarea, "\n---\n", 5, 5);
+  if (action === "code-block") return replaceTextareaRange(textarea, `\n\`\`\`\n${selected || "code"}\n\`\`\`\n`, 5, 5 + (selected || "code").length);
+  if (action === "display-math") return replaceTextareaRange(textarea, `\n$$\n${selected || "x = y"}\n$$\n`, 4, 4 + (selected || "x = y").length);
+  if (action === "link") return replaceTextareaRange(textarea, `[${selected || "title"}](https://example.com)`, 1, 1 + (selected || "title").length);
+  if (action === "image") return replaceTextareaRange(textarea, `![${selected || "image"}](https://example.com/image.png)`, 2, 2 + (selected || "image").length);
+  if (action === "color") return replaceTextareaRange(textarea, `:red[${text}]`, 5, 5 + text.length);
+}
+
+function imageMarkdownAlt(file, index = 0) {
+  const raw = String(file?.name || `pasted-image-${index + 1}`)
+    .replace(/\.[^.]+$/, "")
+    .replace(/[-_]+/g, " ")
+    .trim();
+  return (raw || `Pasted image ${index + 1}`)
+    .replaceAll("[", "\\[")
+    .replaceAll("]", "\\]");
+}
+
+function imageMarkdownText(alt, url) {
+  return `![${alt}](${url})`;
+}
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error || new Error("Could not read pasted image"));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function uploadNotebookImageAsDataUrl(file) {
+  const dataUrl = await fileToDataUrl(file);
+  return api("/api/notebook/attachments", {
+    method: "POST",
+    body: {
+      data_url: dataUrl,
+      name: file.name || "pasted-image",
+    },
+  });
+}
+
+async function uploadNotebookImage(file) {
+  const response = await fetch(`/api/notebook/attachments?name=${encodeURIComponent(file.name || "pasted-image")}`, {
+    method: "POST",
+    headers: { "Content-Type": file.type || "image/png" },
+    body: file,
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (response.ok) return payload;
+  return uploadNotebookImageAsDataUrl(file);
+}
+
+function insertMarkdownAtCursor(textarea, markdown, options = {}) {
+  const { start } = selectedTextareaRange(textarea);
+  const leading = start > 0 && textarea.value[start - 1] !== "\n" ? "\n" : "";
+  const trailing = textarea.value[start] && textarea.value[start] !== "\n" ? "\n" : "";
+  const insertion = `${leading}${markdown}${trailing}`;
+  replaceTextareaRange(textarea, insertion, insertion.length, insertion.length, options);
+}
+
+function replaceNotebookImageUrl(textarea, previewUrl, savedUrl) {
+  if (!textarea.value.includes(previewUrl)) return false;
+  textarea.value = textarea.value.replaceAll(previewUrl, savedUrl);
+  updateNotebookPreview();
+  scheduleNotebookAutosave();
+  return true;
+}
+
+async function pasteNotebookImages(event) {
+  if (!event.target.matches("#notebook-body")) return;
+  const files = Array.from(event.clipboardData?.items || [])
+    .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+    .map((item) => item.getAsFile())
+    .filter(Boolean);
+  if (!files.length) return;
+
+  event.preventDefault();
+  const oversized = files.find((file) => file.size > MAX_NOTEBOOK_IMAGE_BYTES);
+  if (oversized) {
+    showFlash(`${oversized.name || "This image"} is larger than 10 MB.`, "error");
+    return;
+  }
+
+  const textarea = event.target;
+  const uploads = files.map((file, index) => {
+    const previewUrl = URL.createObjectURL(file);
+    insertMarkdownAtCursor(textarea, imageMarkdownText(imageMarkdownAlt(file, index), previewUrl), { autosave: false });
+    return uploadNotebookImage(file)
+      .then((result) => {
+        if (replaceNotebookImageUrl(textarea, previewUrl, result.url)) {
+          URL.revokeObjectURL(previewUrl);
+        }
+      })
+      .catch((error) => {
+        showFlash(error.message, "error");
+        setNotebookSaveStatus("Image upload failed", "error");
+      });
+  });
+
+  showFlash(files.length === 1 ? "Image inserted." : `${files.length} images inserted.`);
+  setNotebookSaveStatus("Uploading image...", "saving");
+  await Promise.all(uploads);
+}
+
+function renderInlineMarkdown(value) {
+  const codeSpans = [];
+  let text = String(value ?? "").replace(/`([^`]+)`/g, (_match, code) => {
+    const token = `@@CODE${codeSpans.length}@@`;
+    codeSpans.push(`<code>${escapeHtml(code)}</code>`);
+    return token;
+  });
+
+  // Protect inline math ($...$ and \(...\)) before markdown so emphasis/escaping
+  // can't corrupt the LaTeX; MathJax renders the .math-inline spans later.
+  const mathSpans = [];
+  const stashMath = (_match, content) => {
+    const token = `@@MATH${mathSpans.length}@@`;
+    mathSpans.push(`<span class="math-inline">${escapeHtml(content)}</span>`);
+    return token;
+  };
+  text = text
+    .replace(/\\\[([\s\S]+?)\\\]/g, stashMath)
+    .replace(/\\\(([\s\S]+?)\\\)/g, stashMath)
+    .replace(/\$(?!\$)([^\n$]+?)\$/g, stashMath);
+
+  text = escapeHtml(text);
+  text = text.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+&quot;([^&]*)&quot;)?\)(?:\{([^}]*)\})?/g, (_match, alt, url, title, attrs) => {
+    return buildImageTag(alt, url, title, attrs);
+  });
+  text = text.replace(/\[([^\]]+)\]\(([^)\s]+)(?:\s+&quot;([^&]*)&quot;)?\)/g, (_match, label, url, title) => {
+    const titleAttribute = title ? ` title="${escapeAttribute(title)}"` : "";
+    return `<a href="${escapeAttribute(safeMarkdownUrl(url))}"${titleAttribute} target="_blank" rel="noopener noreferrer">${label}</a>`;
+  });
+  text = text
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*([^*]+)\*/g, "<em>$1</em>");
+
+  // Colored text: :red[text] or :#0b6e62[text]. The color is sanitized so it can't
+  // break out of the style attribute; unrecognized colors are left as literal text.
+  text = text.replace(/:(#[0-9a-fA-F]{3,8}|[a-zA-Z]+)\[([^\]]+)\]/g, (match, color, inner) => {
+    const safe = sanitizeColor(color);
+    return safe ? `<span style="color:${safe}">${inner}</span>` : match;
+  });
+
+  for (const [index, code] of codeSpans.entries()) {
+    text = text.replaceAll(`@@CODE${index}@@`, code);
+  }
+  for (const [index, math] of mathSpans.entries()) {
+    text = text.replaceAll(`@@MATH${index}@@`, math);
+  }
+  return text;
+}
+
+// Only allow hex colors and bare color names so the value can't break out of the
+// inline style attribute. Returns null for anything else.
+function sanitizeColor(value) {
+  const v = String(value).trim();
+  if (/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(v)) return v;
+  if (/^[a-zA-Z]+$/.test(v)) return v.toLowerCase();
+  return null;
+}
+
+function normalizeDimension(value) {
+  return /^\d+$/.test(value) ? `${value}px` : value;
+}
+
+// Turn a `{width=320 height=200}` attribute block into a sanitized inline style.
+function imageSizeStyle(attrs) {
+  if (!attrs) return "";
+  const dims = [];
+  const width = /(?:^|[\s;,])width\s*=\s*(\d+(?:px|%)?)/i.exec(attrs);
+  const height = /(?:^|[\s;,])height\s*=\s*(\d+(?:px|%)?)/i.exec(attrs);
+  if (width) dims.push(`width:${normalizeDimension(width[1])}`);
+  if (height) dims.push(`height:${normalizeDimension(height[1])}`);
+  if (!dims.length) return "";
+  dims.push("max-width:100%");
+  return ` style="${dims.join(";")}"`;
+}
+
+function buildImageTag(alt, url, title, attrs) {
+  const titleAttribute = title ? ` title="${escapeAttribute(title)}"` : "";
+  return `<img src="${escapeAttribute(safeMarkdownUrl(url))}" alt="${escapeAttribute(alt)}"${titleAttribute}${imageSizeStyle(attrs)} loading="lazy">`;
+}
+
+// A line that is nothing but an image becomes a <figure>; its title is the caption.
+function standaloneImageMatch(line) {
+  const match = String(line).match(/^!\[([^\]]*)\]\((\S+?)(?:\s+"([^"]*)")?\)(?:\{([^}]*)\})?$/);
+  return match ? { alt: match[1], url: match[2], title: match[3] || "", attrs: match[4] || "" } : null;
+}
+
+function renderFigure({ alt, url, title, attrs }) {
+  const img = buildImageTag(alt, url, title, attrs);
+  const caption = title ? `<figcaption>${renderInlineMarkdown(title)}</figcaption>` : "";
+  return `<figure class="notebook-figure">${img}${caption}</figure>`;
+}
+
+function splitMarkdownTableRow(line) {
+  const trimmed = String(line || "").trim();
+  const content = trimmed.startsWith("|") && trimmed.endsWith("|")
+    ? trimmed.slice(1, -1)
+    : trimmed;
+  const cells = [];
+  let cell = "";
+  let escaped = false;
+  for (const char of content) {
+    if (escaped) {
+      cell += char;
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      cell += char;
+      continue;
+    }
+    if (char === "|") {
+      cells.push(cell.trim());
+      cell = "";
+      continue;
+    }
+    cell += char;
+  }
+  cells.push(cell.trim());
+  return cells;
+}
+
+function isMarkdownTableRow(line) {
+  return String(line || "").includes("|") && splitMarkdownTableRow(line).length >= 2;
+}
+
+function isMarkdownTableSeparator(line) {
+  const cells = splitMarkdownTableRow(line);
+  return cells.length >= 2 && cells.every((cell) => /^:?-{3,}:?$/.test(cell.replace(/\s+/g, "")));
+}
+
+function tableAlignment(separatorCell) {
+  const value = separatorCell.replace(/\s+/g, "");
+  if (value.startsWith(":") && value.endsWith(":")) return "center";
+  if (value.endsWith(":")) return "right";
+  return "left";
+}
+
+function renderMarkdownTable(headerLine, separatorLine, bodyLines) {
+  const headers = splitMarkdownTableRow(headerLine);
+  const alignments = splitMarkdownTableRow(separatorLine).map(tableAlignment);
+  const rows = bodyLines.map(splitMarkdownTableRow);
+  const columnCount = Math.max(headers.length, alignments.length, ...rows.map((row) => row.length));
+  const cellStyle = (index) => ` style="text-align: ${alignments[index] || "left"}"`;
+  const headerHtml = Array.from({ length: columnCount }, (_item, index) => (
+    `<th${cellStyle(index)}>${renderInlineMarkdown(headers[index] || "")}</th>`
+  )).join("");
+  const bodyHtml = rows.map((row) => (
+    `<tr>${Array.from({ length: columnCount }, (_item, index) => (
+      `<td${cellStyle(index)}>${renderInlineMarkdown(row[index] || "")}</td>`
+    )).join("")}</tr>`
+  )).join("");
+  return `<div class="notebook-table-wrap"><table>${bodyHtml ? `<thead><tr>${headerHtml}</tr></thead><tbody>${bodyHtml}</tbody>` : `<tbody><tr>${headerHtml}</tr></tbody>`}</table></div>`;
+}
+
+function looksLikeTex(value) {
+  return /\\[a-zA-Z]+|[_^]|[=<>≈≤≥]|\\[,;! ]/.test(String(value || ""));
+}
+
+function oneLineDisplayMath(trimmed) {
+  const delimited = trimmed.match(/^\$\$\s*([\s\S]+?)\s*\$\$$/)
+    || trimmed.match(/^\\\[\s*([\s\S]+?)\s*\\\]$/);
+  if (delimited) return delimited[1];
+
+  const bareBracket = trimmed.match(/^\[\s*([\s\S]+?)\s*\]$/);
+  if (bareBracket && looksLikeTex(bareBracket[1])) return bareBracket[1];
+  return null;
+}
+
+function displayMathStart(trimmed) {
+  const match = trimmed.match(/^(\$\$|\\\[|\[)\s*([\s\S]*)$/);
+  if (!match) return null;
+  if (match[1] === "[" && match[2].trim() && !looksLikeTex(match[2])) return null;
+  return {
+    closeDelimiter: match[1] === "$$" ? "$$" : match[1] === "\\[" ? "\\]" : "]",
+    content: match[2],
+  };
+}
+
+function displayMathCloseMatch(line, closeDelimiter) {
+  if (closeDelimiter === "$$") return line.match(/^(.*?)\s*\$\$\s*$/);
+  if (closeDelimiter === "\\]") return line.match(/^(.*?)\s*\\\]\s*$/);
+  return line.match(/^(.*?)\s*\]\s*$/);
+}
+
+function renderMarkdown(value) {
+  const lines = String(value || "").split(/\r?\n/);
+  const html = [];
+  let paragraph = [];
+  let listItems = [];
+  let codeLines = [];
+  let mathLines = [];
+  let inCode = false;
+  let inMath = false;
+  let mathCloseDelimiter = null;
+
+  const flushParagraph = () => {
+    if (!paragraph.length) return;
+    html.push(`<p>${renderInlineMarkdown(paragraph.join(" "))}</p>`);
+    paragraph = [];
+  };
+  const flushList = () => {
+    if (!listItems.length) return;
+    html.push(`<ul>${listItems.map((item) => {
+      if (item.task) {
+        return `<li class="task-list-item"><input type="checkbox" disabled ${item.checked ? "checked" : ""}> <span>${renderInlineMarkdown(item.text)}</span></li>`;
+      }
+      return `<li>${renderInlineMarkdown(item.text)}</li>`;
+    }).join("")}</ul>`);
+    listItems = [];
+  };
+  const flushCode = () => {
+    if (!codeLines.length) return;
+    html.push(`<pre><code>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
+    codeLines = [];
+  };
+  const flushMath = () => {
+    if (!mathLines.length) return;
+    html.push(`<div class="math-display">${escapeHtml(mathLines.join("\n"))}</div>`);
+    mathLines = [];
+  };
+
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex];
+    const trimmed = line.trim();
+    if (trimmed.startsWith("```")) {
+      if (inCode) {
+        flushCode();
+        inCode = false;
+      } else {
+        flushParagraph();
+        flushList();
+        inCode = true;
+      }
+      continue;
+    }
+    if (inCode) {
+      codeLines.push(line);
+      continue;
+    }
+
+    if (inMath) {
+      const closeMatch = displayMathCloseMatch(line, mathCloseDelimiter);
+      if (closeMatch) {
+        if (closeMatch[1].trim()) mathLines.push(closeMatch[1]);
+        flushMath();
+        inMath = false;
+        mathCloseDelimiter = null;
+        continue;
+      }
+      mathLines.push(line);
+      continue;
+    }
+
+    const oneLineMath = oneLineDisplayMath(trimmed);
+    if (oneLineMath !== null) {
+      flushParagraph();
+      flushList();
+      html.push(`<div class="math-display">${escapeHtml(oneLineMath)}</div>`);
+      continue;
+    }
+
+    const mathStart = displayMathStart(trimmed);
+    if (mathStart) {
+      flushParagraph();
+      flushList();
+      inMath = true;
+      mathCloseDelimiter = mathStart.closeDelimiter;
+      if (mathStart.content.trim()) mathLines.push(mathStart.content);
+      continue;
+    }
+
+    if (!trimmed) {
+      flushParagraph();
+      flushList();
+      continue;
+    }
+
+    if (
+      isMarkdownTableRow(trimmed)
+      && lineIndex + 1 < lines.length
+      && isMarkdownTableSeparator(lines[lineIndex + 1].trim())
+    ) {
+      flushParagraph();
+      flushList();
+      const headerLine = trimmed;
+      const separatorLine = lines[lineIndex + 1].trim();
+      const bodyLines = [];
+      lineIndex += 2;
+      while (lineIndex < lines.length && isMarkdownTableRow(lines[lineIndex].trim())) {
+        bodyLines.push(lines[lineIndex].trim());
+        lineIndex += 1;
+      }
+      lineIndex -= 1;
+      html.push(renderMarkdownTable(headerLine, separatorLine, bodyLines));
+      continue;
+    }
+
+    if (/^(-{3,}|={3,})$/.test(trimmed)) {
+      flushParagraph();
+      flushList();
+      html.push("<hr>");
+      continue;
+    }
+
+    const heading = trimmed.match(/^(#{1,3})\s+(.+)$/);
+    if (heading) {
+      flushParagraph();
+      flushList();
+      const level = heading[1].length + 2;
+      html.push(`<h${level}>${renderInlineMarkdown(heading[2])}</h${level}>`);
+      continue;
+    }
+
+    const task = trimmed.match(/^[-*]\s+\[([ xX])\]\s+(.+)$/);
+    if (task) {
+      flushParagraph();
+      listItems.push({ task: true, checked: task[1].toLowerCase() === "x", text: task[2] });
+      continue;
+    }
+
+    const bullet = trimmed.match(/^[-*]\s+(.+)$/);
+    if (bullet) {
+      flushParagraph();
+      listItems.push({ task: false, text: bullet[1] });
+      continue;
+    }
+
+    const quote = trimmed.match(/^>\s?(.+)$/);
+    if (quote) {
+      flushParagraph();
+      flushList();
+      html.push(`<blockquote>${renderInlineMarkdown(quote[1])}</blockquote>`);
+      continue;
+    }
+
+    const figure = standaloneImageMatch(trimmed);
+    if (figure) {
+      flushParagraph();
+      flushList();
+      html.push(renderFigure(figure));
+      continue;
+    }
+
+    flushList();
+    paragraph.push(trimmed);
+  }
+
+  flushCode();
+  flushMath();
+  flushParagraph();
+  flushList();
+  return html.join("") || `<p class="notebook-preview-empty">Nothing to preview yet.</p>`;
+}
+
+
+// Render the LaTeX in .math-inline / .math-display nodes via MathJax (loaded from
+// the CDN in index.html). No-op until MathJax has finished loading; the
+// "mathjax-ready" listener re-runs it for the initial render.
+let mathStylesAdded = false;
+function ensureMathStyles() {
+  if (mathStylesAdded || !window.MathJax || !window.MathJax.svgStylesheet) return;
+  document.head.appendChild(window.MathJax.svgStylesheet());
+  mathStylesAdded = true;
+}
+
+function typesetMath(container) {
+  typesetMathAsync(container);
+}
+
+// Same as typesetMath, but resolves once every node has settled so callers that
+// serialize the rendered HTML (e.g. the PDF popup) can wait for the SVG output.
+function typesetMathAsync(container) {
+  if (!container || !window.MathJax || !window.MathJax.tex2svgPromise) return Promise.resolve();
+  ensureMathStyles();
+  const nodes = container.querySelectorAll(
+    ".math-inline:not([data-math-done]), .math-display:not([data-math-done])"
+  );
+  return Promise.all(Array.from(nodes).map((node) => {
+    const tex = node.textContent;
+    const display = node.classList.contains("math-display");
+    return renderTexNode(node, tex, display)
+      .catch(() => renderTexNode(node, tex.replace(/\\text\{([^{}]+)\}/g, (_match, content) => `\\mathrm{${content.replace(/\s+/g, "\\ ")}}`), display))
+      .catch(() => {});
+  }));
+}
+
+// MathJax's SVG output references shared glyph styles; grab them as CSS text so the
+// detached PDF popup (which never loads MathJax) can render the math correctly.
+function mathStylesheetCss() {
+  if (!window.MathJax || !window.MathJax.svgStylesheet) return "";
+  return window.MathJax.svgStylesheet().textContent || "";
+}
+
+function renderTexNode(node, tex, display) {
+  return window.MathJax.tex2svgPromise(tex, { display })
+      .then((wrapper) => {
+        const svg = wrapper.querySelector("svg");
+        if (!svg) throw new Error("MathJax did not produce SVG");
+        node.textContent = "";
+        node.appendChild(svg);
+        node.setAttribute("data-math-done", "");
+      });
+}
+
+function notebookPreviewElement() {
+  return els.notebookContainer.querySelector("#notebook-preview");
+}
+
+document.addEventListener("mathjax-ready", () => typesetMath(notebookPreviewElement()));
+
+function scrollRatio(element) {
+  const maxScroll = element.scrollHeight - element.clientHeight;
+  return maxScroll > 0 ? element.scrollTop / maxScroll : 0;
+}
+
+function setScrollRatio(element, ratio) {
+  const maxScroll = element.scrollHeight - element.clientHeight;
+  element.scrollTop = maxScroll > 0 ? maxScroll * ratio : 0;
+}
+
+// Editor and preview scroll independently; these buttons let the user align one to
+// the other on demand instead of keeping them permanently coupled.
+function alignNotebookPanes(direction) {
+  const bodyInput = els.notebookContainer.querySelector("#notebook-body");
+  const preview = els.notebookContainer.querySelector("#notebook-preview");
+  if (!bodyInput || !preview) return;
+  if (direction === "editor-to-preview") {
+    setScrollRatio(bodyInput, scrollRatio(preview));
+  } else {
+    setScrollRatio(preview, scrollRatio(bodyInput));
+  }
+}
+
+function updateNotebookPreview() {
+  const bodyInput = els.notebookContainer.querySelector("#notebook-body");
+  const preview = els.notebookContainer.querySelector("#notebook-preview");
+  if (!bodyInput || !preview) return;
+  const currentPreviewRatio = scrollRatio(preview);
+  preview.innerHTML = `<div class="notebook-preview-document">${renderMarkdown(bodyInput.value)}</div>`;
+  setScrollRatio(preview, currentPreviewRatio);
+  typesetMath(preview);
+}
+
+
+function renderNotebookEditor(note) {
+  const selectedTopics = new Set(note.topics || []);
+  return `
+    <div class="notebook-editor-header">
+      <div>
+        <p class="section-kicker notebook-entry-kicker">
+          <span>Entry</span>
+          <span id="notebook-save-status" class="notebook-save-status saved">Saved</span>
+        </p>
+        <input id="notebook-title" class="notebook-title-input" type="text" value="${escapeAttribute(note.title)}" placeholder="Note title">
+      </div>
+      <div class="notebook-editor-actions">
+        <button id="notebook-export-all" class="button button-striped" type="button">Export all</button>
+        <button id="notebook-export" class="button" type="button">Open alone</button>
+        <button id="notebook-save" class="button button-primary" type="button">Save</button>
+        <button id="notebook-delete" class="button button-danger" type="button">Delete</button>
+      </div>
+    </div>
+    ${markdownToolbarHtml()}
+    <div class="notebook-compose">
+      <label class="notebook-write-panel">
+        <span class="section-kicker">Markdown</span>
+        <textarea id="notebook-body" class="notebook-body-input" rows="18" placeholder="Write synthesis notes, claims, open questions, and links between files.">${escapeHtml(note.body)}</textarea>
+      </label>
+      <div class="notebook-resizer notebook-compose-resizer" data-resizer="notebook-compose" role="separator" aria-orientation="vertical" aria-label="Resize markdown preview"></div>
+      <section class="notebook-preview-panel">
+        <div class="notebook-scroll-align" role="group" aria-label="Align pane scrolling">
+          <button type="button" id="notebook-align-preview" class="notebook-align-button" title="Scroll preview to match the editor" aria-label="Scroll preview to match the editor">→</button>
+          <button type="button" id="notebook-align-editor" class="notebook-align-button" title="Scroll editor to match the preview" aria-label="Scroll editor to match the preview">←</button>
+        </div>
+        <p class="section-kicker">Preview</p>
+        <div id="notebook-preview" class="notebook-markdown-preview"><div class="notebook-preview-document">${renderMarkdown(note.body)}</div></div>
+      </section>
+    </div>
+    <div class="notebook-topics">
+      <p class="section-kicker">Topics</p>
+      <div class="notebook-topic-chips">
+        ${state.topics.length ? state.topics.map((topic) => {
+          const selected = selectedTopics.has(topic.name);
+          return `
+          <label class="notebook-topic-chip ${selected ? "selected" : ""}">
+            <input type="checkbox" data-note-topic="${escapeAttribute(topic.name)}" ${selected ? "checked" : ""}>
+            <span>${escapeHtml(topic.name)}</span>
+          </label>
+        `;
+        }).join("") : `<span class="empty-state">No topics defined yet.</span>`}
+      </div>
+    </div>
+    <div class="notebook-linked-files">
+      <p class="section-kicker">Linked Files</p>
+      ${noteReferencedDocuments(note).length ? noteReferencedDocuments(note).map((doc) => `
+        <button type="button" class="notebook-linked-file" data-notebook-open-doc="${doc.id}">
+          <strong>${escapeHtml(doc.title || `Document #${doc.id}`)}</strong>
+          <span>${escapeHtml(doc.authors || doc.source || "No authors")}</span>
+        </button>
+      `).join("") : `<div class="empty-state">No files linked yet.</div>`}
+    </div>
+  `;
+}
+
+function documentMarkdownLink(doc) {
+  const title = (doc.title || `Document #${doc.id}`).replaceAll("[", "\\[").replaceAll("]", "\\]");
+  const url = new URL(`/api/documents/${doc.id}/open`, window.location.href).href;
+  return `[${title}](${url})`;
+}
+
+function buildNoteExportSection(note) {
+  const title = escapeHtml(note.title || "Untitled note");
+  const topics = (note.topics || []).length
+    ? `<div class="pdf-note-topics">${note.topics.map((t) => `<span>${escapeHtml(t)}</span>`).join("")}</div>`
+    : "";
+  const linkedDocs = noteReferencedDocuments(note);
+  const linked = linkedDocs.length
+    ? `<section class="pdf-linked"><h2>Linked files</h2><ul>${linkedDocs.map((doc) => `<li><strong>${escapeHtml(doc.title || `Document #${doc.id}`)}</strong> — ${escapeHtml(doc.authors || doc.source || "No authors")}</li>`).join("")}</ul></section>`
+    : "";
+  return `<article class="pdf-note"><h1>${title}</h1>${topics}${renderMarkdown(note.body)}${linked}</article>`;
+}
+
+// Inlined into the print-only popup document (light theme, paper-friendly).
+const PDF_PRINT_CSS = `
+  :root { color-scheme: light; }
+  body { font-family: Georgia, "Times New Roman", serif; color: #1a1a1a; background: #fff; margin: 0; padding: 3rem 1.5rem; line-height: 1.7; font-size: 1.06rem; }
+  .pdf-document { max-width: 42rem; margin: 0 auto; }
+  .pdf-document, .pdf-document * { overflow-wrap: break-word; word-wrap: break-word; }
+  h1, h2, h3, h4, h5 { font-family: Georgia, "Iowan Old Style", serif; line-height: 1.2; font-weight: 700; }
+  h1 { font-size: 2.1rem; margin: 0 0 0.6rem; }
+  h2 { font-size: 1.7rem; margin: 2rem 0 0.5rem; }
+  h3 { font-size: 1.42rem; margin: 1.7rem 0 0.4rem; }
+  h4 { font-size: 1.2rem; margin: 1.5rem 0 0.35rem; }
+  h5 { font-size: 1.05rem; margin: 1.3rem 0 0.3rem; text-transform: uppercase; letter-spacing: 0.03em; color: #555; }
+  p { margin: 0 0 1rem; }
+  a { color: #0b6e62; word-break: break-word; }
+  img { max-width: 100%; height: auto; display: block; margin: 1rem auto; }
+  figure { margin: 1.4rem auto; text-align: center; }
+  figure img { margin: 0 auto; }
+  figcaption { margin-top: 0.5rem; font-size: 0.9rem; color: #555; font-style: italic; }
+  .pdf-toolbar { display: flex; justify-content: flex-end; max-width: 42rem; margin: 0 auto; padding: 0 0 0.5rem; }
+  .pdf-toolbar button { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 50%; cursor: pointer; border: 1px solid #d8d3c7; background: #fff; color: #0b6e62; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08); transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease; }
+  .pdf-toolbar button:hover { background: #0b6e62; border-color: #0b6e62; color: #fff; }
+  @media print { .pdf-toolbar { display: none; } }
+  .pdf-note-topics { margin: 0 0 1.2rem; }
+  .pdf-note-topics span { display: inline-block; font-size: 0.75rem; padding: 0.1rem 0.5rem; margin-right: 0.3rem; border: 1px solid #999; border-radius: 999px; }
+  .pdf-linked { margin-top: 1.8rem; border-top: 1px solid #ccc; padding-top: 0.8rem; }
+  .pdf-note { break-after: page; }
+  .pdf-note:last-child { break-after: auto; }
+  blockquote { border-left: 3px solid #ccc; margin: 1rem 0; padding: 0.2rem 0 0.2rem 1rem; color: #444; }
+  ul, ol { padding-left: 1.4rem; margin: 0 0 1rem; }
+  li { margin: 0.25rem 0; }
+  pre, code { font-family: "SFMono-Regular", Consolas, monospace; }
+  code { font-size: 0.9em; background: #f0f0f0; padding: 0.1em 0.35em; border-radius: 4px; }
+  pre { background: #f5f5f5; padding: 0.75rem; border-radius: 8px; overflow-x: auto; }
+  pre code { background: none; padding: 0; }
+  table { width: 100%; border-collapse: collapse; margin: 0 0 1rem; font-size: 0.96rem; }
+  th, td { border: 1px solid #ddd; padding: 0.4rem 0.6rem; text-align: left; vertical-align: top; }
+  th { background: #f3f3f3; }
+  .math-display { overflow-x: auto; text-align: center; margin: 1.2rem 0; }
+  .math-inline svg, .math-display svg { max-width: 100%; }
+`;
+
+// Toolbar shown at the top of the export tab: a single download icon that calls
+// print() on click (instead of auto-printing) and is hidden in the printed output.
+const PDF_TOOLBAR_HTML =
+  `<div class="pdf-toolbar"><button type="button" onclick="window.print()" title="Save as PDF" aria-label="Save as PDF">` +
+  `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 11 5 5 5-5"/><path d="M5 21h14"/></svg>` +
+  `</button></div>`;
+
+// `sectionsHtml` MUST already be escaped/sanitized by the caller (see
+// buildNoteExportSection); PDF_PRINT_CSS / PDF_TOOLBAR_HTML are static constants.
+// All are written verbatim into the document, so never pass unsanitized input here.
+async function openNotePrintWindow(docTitle, sectionsHtml) {
+  // Open synchronously so the tab isn't blocked, then render math before writing.
+  const win = window.open("", "_blank");
+  if (!win) {
+    showFlash("Could not open the export tab — allow popups for this site.", "error");
+    return;
+  }
+  // MathJax isn't loaded in the new tab, so pre-render the LaTeX to SVG here and embed
+  // the result (plus MathJax's glyph stylesheet) into the document.
+  const staged = document.createElement("div");
+  staged.className = "pdf-document";
+  staged.innerHTML = sectionsHtml;
+  await typesetMathAsync(staged).catch(() => {});
+  const css = `${PDF_PRINT_CSS}${mathStylesheetCss()}`;
+  win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(docTitle)}</title><style>${css}</style></head><body>${PDF_TOOLBAR_HTML}${staged.outerHTML}</body></html>`);
+  win.document.close();
+  // Don't auto-print: the standalone page stays open and the user clicks Save as PDF.
+  win.focus();
+}
+
+async function exportNoteToPdf() {
+  if (!selectedNotebookNote()) {
+    showFlash("Select a note to export.", "error");
+    return;
+  }
+  // Flush unsaved editor edits to state so the export reflects the current text.
+  await saveNotebookNote({ renderAfterSave: false }).catch(() => {});
+  const note = selectedNotebookNote();
+  if (!note) return;
+  await openNotePrintWindow(note.title || "Note", buildNoteExportSection(note));
+}
+
+async function exportAllNotesToPdf() {
+  if (!state.notebookNotes.length) {
+    showFlash("No notes to export.", "error");
+    return;
+  }
+  // Flush the open note's unsaved edits before exporting the whole notebook.
+  if (selectedNotebookNote()) {
+    await saveNotebookNote({ renderAfterSave: false }).catch(() => {});
+  }
+  const sections = state.notebookNotes.map(buildNoteExportSection).join("");
+  await openNotePrintWindow("Notebook", sections);
+}
+
+function referenceSearchMatches(doc, term) {
+  if (!term) return true;
+  const haystack = [
+    doc.title,
+    doc.authors,
+    doc.summary,
+    doc.status,
+    doc.source,
+    ...doc.topics,
+    ...doc.paths,
+  ].join(" ").toLowerCase();
+  return haystack.includes(term);
+}
+
+function documentsForNotebookReferenceSearch(note) {
+  const term = state.notebookReferenceSearch.trim().toLowerCase();
+  const selectedIds = new Set(note.document_ids || []);
+  return getVisibleDocuments()
+    .filter((doc) => referenceSearchMatches(doc, term))
+    .sort((a, b) => Number(selectedIds.has(b.id)) - Number(selectedIds.has(a.id)) || a.title.localeCompare(b.title))
+    .slice(0, 12);
+}
+
+function renderNotebookReferenceSearch(note) {
+  return `
+    <section class="notebook-reference-strip">
+      <div class="notebook-reference-search-head">
+        <div>
+          <p class="section-kicker">References</p>
+          <h3>Search Files</h3>
+        </div>
+        <input id="notebook-reference-search" type="search" value="${escapeAttribute(state.notebookReferenceSearch)}" placeholder="Search tracked files to link or copy markdown">
+      </div>
+      <div id="notebook-reference-results" class="notebook-reference-results">
+        ${renderNotebookReferenceResults(note)}
+      </div>
+    </section>
+  `;
+}
+
+function renderNotebookReferenceResults(note) {
+  const selectedIds = new Set(note.document_ids || []);
+  const docs = documentsForNotebookReferenceSearch(note);
+  if (!docs.length) {
+    return `<div class="empty-state">No matching tracked files.</div>`;
+  }
+  return docs.map((doc) => `
+    <div class="notebook-reference-result ${selectedIds.has(doc.id) ? "selected" : ""}">
+      <label>
+        <input type="checkbox" data-note-ref-id="${doc.id}" ${selectedIds.has(doc.id) ? "checked" : ""}>
+        <span>
+          <strong>${escapeHtml(doc.title || `Document #${doc.id}`)}</strong>
+          <small>${escapeHtml(truncateAuthors(doc.authors))} · ${escapeHtml(doc.status)}</small>
+        </span>
+      </label>
+      <div class="notebook-reference-actions">
+        <button type="button" class="copy-md" data-copy-doc-markdown="${doc.id}">Copy MD</button>
+        <button type="button" class="open-doc" data-notebook-open-doc="${doc.id}">Open</button>
+      </div>
+    </div>
+  `).join("");
+}
+
+function updateNotebookReferenceResults() {
+  const note = selectedNotebookNote();
+  const results = els.notebookContainer.querySelector("#notebook-reference-results");
+  if (!note || !results) return;
+  results.innerHTML = renderNotebookReferenceResults(note);
+}
+
+function setNotebookReference(docId, linked) {
+  const note = selectedNotebookNote();
+  if (!note) return;
+  const ids = new Set(note.document_ids || []);
+  if (linked) {
+    ids.add(docId);
+  } else {
+    ids.delete(docId);
+  }
+  note.document_ids = Array.from(ids).sort((a, b) => a - b);
+}
+
+function hasTemporaryNotebookImages(body) {
+  return /!\[[^\]]*\]\(blob:[^)]+\)/.test(String(body || ""));
+}
+
+function currentNotebookPayload() {
+  const titleInput = els.notebookContainer.querySelector("#notebook-title");
+  const bodyInput = els.notebookContainer.querySelector("#notebook-body");
+  const note = selectedNotebookNote();
+  const checkedRefs = note?.document_ids || [];
+  return {
+    title: (titleInput?.value || "").trim() || "Untitled note",
+    body: bodyInput?.value || "",
+    document_ids: checkedRefs,
+    topics: note?.topics || [],
+  };
+}
+
+async function createNotebookNote() {
+  const documentIds = state.selectedId ? [state.selectedId] : [];
+  const result = await api("/api/notebook", {
+    method: "POST",
+    body: {
+      title: "Untitled note",
+      body: "",
+      document_ids: documentIds,
+    },
+  });
+  state.notebookNotes.unshift(result.note);
+  state.selectedNoteId = result.note.id;
+  renderNotebook();
+  showFlash("Notebook note created.");
+}
+
+
+function setNotebookSaveStatus(label, kind = "saved") {
+  const status = els.notebookContainer.querySelector("#notebook-save-status");
+  if (!status) return;
+  window.clearTimeout(notebookSaveStatusResetTimer);
+  status.textContent = label;
+  status.className = `notebook-save-status ${kind}`;
+}
+
+function resetNotebookSaveStatusSoon() {
+  window.clearTimeout(notebookSaveStatusResetTimer);
+  notebookSaveStatusResetTimer = window.setTimeout(() => {
+    setNotebookSaveStatus("Saved", "saved");
+  }, 1400);
+}
+
+
+async function saveNotebookNote({ renderAfterSave = false } = {}) {
+  if (!state.selectedNoteId) return;
+  window.clearTimeout(notebookAutosaveTimer);
+  notebookAutosaveTimer = null;
+  const payload = currentNotebookPayload();
+  if (hasTemporaryNotebookImages(payload.body)) {
+    setNotebookSaveStatus("Image upload pending", "pending");
+    return;
+  }
+  setNotebookSaveStatus("Saving...", "saving");
+  let result;
+  try {
+    result = await api("/api/notebook/" + state.selectedNoteId, {
+    method: "PATCH",
+    body: payload,
+  });
+  } catch (error) {
+    setNotebookSaveStatus("Save failed", "error");
+    throw error;
+  }
+  const index = state.notebookNotes.findIndex((note) => note.id === result.note.id);
+  if (index !== -1) state.notebookNotes[index] = result.note;
+  setNotebookSaveStatus("Saved", "saved");
+  resetNotebookSaveStatusSoon();
+  if (renderAfterSave) renderNotebook();
+}
+
+function scheduleNotebookAutosave() {
+  setNotebookSaveStatus("Autosave pending", "pending");
+  window.clearTimeout(notebookAutosaveTimer);
+  notebookAutosaveTimer = window.setTimeout(() => {
+    saveNotebookNote().catch((error) => showFlash(error.message, "error"));
+  }, DETAIL_AUTOSAVE_DELAY_MS);
+}
+
+async function deleteNotebookNote() {
+  if (!state.selectedNoteId) return;
+  if (!window.confirm("Delete this notebook note? File references are not deleted.")) return;
+  await api("/api/notebook/" + state.selectedNoteId, { method: "DELETE" });
+  state.notebookNotes = state.notebookNotes.filter((note) => note.id !== state.selectedNoteId);
+  state.selectedNoteId = state.notebookNotes[0]?.id || null;
+  renderNotebook();
+  showFlash("Notebook note deleted.");
 }
 
 function waitingScanTooltip() {
@@ -1281,28 +2352,210 @@ els.topicsList.addEventListener("click", async (event) => {
   }
 });
 
-window.addEventListener("pagehide", closeBrowserSession);
 
-// Graph Mode view toggle action
-els.viewToggleBtn.addEventListener("click", () => {
-  if (state.viewMode === "list") {
-    state.viewMode = "graph";
-    els.viewToggleBtn.textContent = "List View";
-    els.viewToggleBtn.classList.add("active");
-    els.tablePanel.classList.add("graph-mode-active");
-    // Ensure checkbox matches state
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function applyNotebookPaneSizes() {
+  const listWidth = window.localStorage.getItem("docuTrackerNotebookListWidth");
+  const markdownWidth = window.localStorage.getItem("docuTrackerNotebookMarkdownWidth");
+  if (listWidth) els.notebookContainer.style.setProperty("--notebook-list-width", listWidth);
+  if (markdownWidth) els.notebookContainer.style.setProperty("--notebook-markdown-width", markdownWidth);
+}
+
+function startNotebookResize(event, kind) {
+  const container = kind === "notebook-list"
+    ? els.notebookContainer.querySelector(".notebook-panes")
+    : els.notebookContainer.querySelector(".notebook-compose");
+  if (!container) return;
+  event.preventDefault();
+  const rect = container.getBoundingClientRect();
+  const startX = event.clientX;
+  const propertyName = kind === "notebook-list" ? "--notebook-list-width" : "--notebook-markdown-width";
+  const storageKey = kind === "notebook-list" ? "docuTrackerNotebookListWidth" : "docuTrackerNotebookMarkdownWidth";
+  const fallback = kind === "notebook-list" ? 280 : Math.round(rect.width * 0.52);
+  const current = Number.parseFloat(els.notebookContainer.style.getPropertyValue(propertyName)) || fallback;
+  const min = kind === "notebook-list" ? 190 : 260;
+  const max = Math.max(min, rect.width - (kind === "notebook-list" ? 520 : 320));
+
+  const onMove = (moveEvent) => {
+    const next = clamp(current + moveEvent.clientX - startX, min, max);
+    const value = `${Math.round(next)}px`;
+    els.notebookContainer.style.setProperty(propertyName, value);
+    window.localStorage.setItem(storageKey, value);
+  };
+  const onUp = () => {
+    document.body.classList.remove("is-resizing-notebook");
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+  };
+
+  document.body.classList.add("is-resizing-notebook");
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp, { once: true });
+}
+
+async function copyMarkdownLinkForDocument(docId) {
+  const doc = state.documents.find((item) => item.id === docId);
+  if (!doc) return;
+  const value = documentMarkdownLink(doc);
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+  } else {
+    window.prompt("Markdown link", value);
+  }
+  showFlash("Markdown link copied.");
+}
+
+
+els.notebookContainer.addEventListener("click", async (event) => {
+  const newButton = event.target.closest("#notebook-new");
+  const noteButton = event.target.closest("button[data-note-id]");
+  const saveButton = event.target.closest("#notebook-save");
+  const deleteButton = event.target.closest("#notebook-delete");
+  const exportButton = event.target.closest("#notebook-export");
+  const exportAllButton = event.target.closest("#notebook-export-all");
+  const alignEditorButton = event.target.closest("#notebook-align-editor");
+  const alignPreviewButton = event.target.closest("#notebook-align-preview");
+  const openButton = event.target.closest("button[data-notebook-open-doc]");
+  const copyButton = event.target.closest("button[data-copy-doc-markdown]");
+  const markdownButton = event.target.closest("button[data-markdown-action]");
+
+  try {
+    if (newButton) {
+      await saveNotebookNote({ renderAfterSave: false });
+      await createNotebookNote();
+      return;
+    }
+    if (noteButton) {
+      const nextNoteId = Number(noteButton.dataset.noteId);
+      if (nextNoteId !== state.selectedNoteId) {
+        await saveNotebookNote({ renderAfterSave: false });
+        state.selectedNoteId = nextNoteId;
+        renderNotebook();
+      }
+      return;
+    }
+    if (saveButton) {
+      await saveNotebookNote({ renderAfterSave: true });
+      showFlash("Notebook note saved.");
+      return;
+    }
+    if (deleteButton) {
+      await deleteNotebookNote();
+      return;
+    }
+    if (exportButton) { await exportNoteToPdf(); return; }
+    if (exportAllButton) { await exportAllNotesToPdf(); return; }
+    if (alignEditorButton) { alignNotebookPanes("editor-to-preview"); return; }
+    if (alignPreviewButton) { alignNotebookPanes("preview-to-editor"); return; }
+    if (copyButton) {
+      await copyMarkdownLinkForDocument(Number(copyButton.dataset.copyDocMarkdown));
+      return;
+    }
+    if (markdownButton) {
+      applyMarkdownToolbarAction(markdownButton.dataset.markdownAction);
+      return;
+    }
+    if (openButton) {
+      const docId = Number(openButton.dataset.notebookOpenDoc);
+      window.open(`/api/documents/${docId}/open`, "_blank", "noopener");
+      showFlash("Document opened.");
+    }
+  } catch (error) {
+    showFlash(error.message, "error");
+  }
+});
+
+els.notebookContainer.addEventListener("paste", (event) => {
+  pasteNotebookImages(event).catch((error) => showFlash(error.message, "error"));
+});
+
+els.notebookContainer.addEventListener("input", (event) => {
+  if (event.target.matches("#notebook-reference-search")) {
+    state.notebookReferenceSearch = event.target.value;
+    updateNotebookReferenceResults();
+    return;
+  }
+  if (!event.target.matches("#notebook-title, #notebook-body")) return;
+  if (event.target.matches("#notebook-body")) updateNotebookPreview();
+  scheduleNotebookAutosave();
+});
+
+els.notebookContainer.addEventListener("change", async (event) => {
+  if (event.target.matches("input[data-note-topic]")) {
+    const note = selectedNotebookNote();
+    if (!note) return;
+    const name = event.target.dataset.noteTopic;
+    const topics = new Set(note.topics || []);
+    if (event.target.checked) topics.add(name);
+    else topics.delete(name);
+    note.topics = Array.from(topics).sort();
+    event.target.closest(".notebook-topic-chip")?.classList.toggle("selected", event.target.checked);
+    // Topics ride the debounced autosave (like title/body edits) rather than the
+    // immediate save used for document references, which re-renders the ref strip.
+    scheduleNotebookAutosave();
+    return;
+  }
+  if (!event.target.matches("input[data-note-ref-id]")) return;
+  setNotebookReference(Number(event.target.dataset.noteRefId), event.target.checked);
+  try {
+    await saveNotebookNote({ renderAfterSave: true });
+    showFlash("Notebook references updated.");
+  } catch (error) {
+    showFlash(error.message, "error");
+  }
+});
+
+els.notebookContainer.addEventListener("pointerdown", (event) => {
+  const resizer = event.target.closest("[data-resizer]");
+  if (!resizer) return;
+  startNotebookResize(event, resizer.dataset.resizer);
+});
+
+function setLibraryViewMode(mode) {
+  state.viewMode = mode;
+  els.tablePanel.classList.toggle("graph-mode-active", mode === "graph");
+  els.tablePanel.classList.toggle("notebook-mode-active", mode === "notebook");
+  document.body.classList.toggle("notebook-app-mode", mode === "notebook");
+  els.viewToggleBtn.textContent = mode === "graph" ? "List View" : "Graph View";
+  els.viewToggleBtn.classList.toggle("active", mode === "graph");
+  els.notebookToggleBtn.textContent = mode === "notebook" ? "Library View" : "Notebook";
+  els.notebookToggleBtn.classList.toggle("active", mode === "notebook");
+
+  if (mode !== "graph" && state.networkInstance) {
+    state.networkInstance.destroy();
+    state.networkInstance = null;
+  }
+  if (mode === "graph") {
     els.freezePhysicsCheckbox.checked = state.freezePhysics;
     renderGraph();
-  } else {
-    state.viewMode = "list";
-    els.viewToggleBtn.textContent = "Graph View";
-    els.viewToggleBtn.classList.remove("active");
-    els.tablePanel.classList.remove("graph-mode-active");
-    if (state.networkInstance) {
-      state.networkInstance.destroy();
-      state.networkInstance = null;
-    }
   }
+  if (mode === "notebook") {
+    applyNotebookPaneSizes();
+    renderNotebook();
+  }
+}
+
+window.addEventListener("pagehide", closeBrowserSession);
+
+// Library view actions
+els.viewToggleBtn.addEventListener("click", async () => {
+  if (state.viewMode === "notebook") {
+    await saveNotebookNote({ renderAfterSave: false }).catch((error) => showFlash(error.message, "error"));
+  }
+  setLibraryViewMode(state.viewMode === "graph" ? "list" : "graph");
+});
+
+els.notebookToggleBtn.addEventListener("click", async () => {
+  if (state.viewMode === "notebook") {
+    await saveNotebookNote({ renderAfterSave: false }).catch((error) => showFlash(error.message, "error"));
+    setLibraryViewMode("list");
+    return;
+  }
+  setLibraryViewMode("notebook");
 });
 
 // Freeze physics checkbox listener

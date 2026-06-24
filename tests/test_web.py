@@ -1,3 +1,5 @@
+import base64
+import errno
 import json
 import os
 from datetime import datetime, timezone
@@ -10,7 +12,7 @@ from docu_tracker.db import Database
 from docu_tracker.web import DocuTrackerWebApp, build_test_environ
 
 
-def call_app(app, method="GET", path="/", payload=None):
+def call_app(app, method="GET", path="/", payload=None, body=None, content_type="application/json"):
     captured = {}
 
     def start_response(status, headers):
@@ -19,7 +21,13 @@ def call_app(app, method="GET", path="/", payload=None):
 
     body = b"".join(
         app(
-            build_test_environ(method=method, path=path, payload=payload),
+            build_test_environ(
+                method=method,
+                path=path,
+                payload=payload,
+                body=body,
+                content_type=content_type,
+            ),
             start_response,
         )
     )
@@ -269,6 +277,106 @@ def test_topic_crud_routes(tmp_path, monkeypatch):
     assert "Research Notes" not in topic_names
 
 
+
+def test_notebook_routes_persist_notes_and_references(tmp_path, monkeypatch):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    app = DocuTrackerWebApp(config_dir=str(config_dir), cwd=str(tmp_path))
+
+    file_path = tmp_path / "paper.pdf"
+    file_path.write_bytes(b"pdf-bytes")
+    doc_id = seed_document(app, file_path)
+
+    create_response = call_app(
+        app,
+        "POST",
+        "/api/notebook",
+        {
+            "title": "Deception map",
+            "body": "# Claim\n- Evidence",
+            "document_ids": [doc_id],
+        },
+    )
+    assert create_response["status"].startswith("201")
+    note = create_response["json"]["note"]
+    assert note["title"] == "Deception map"
+    assert note["document_ids"] == [doc_id]
+
+    update_response = call_app(
+        app,
+        "PATCH",
+        f"/api/notebook/{note["id"]}",
+        {
+            "title": "Updated map",
+            "body": "Updated synthesis",
+            "document_ids": [],
+        },
+    )
+    assert update_response["status"].startswith("200")
+    assert update_response["json"]["note"]["title"] == "Updated map"
+    assert update_response["json"]["note"]["document_ids"] == []
+
+    state_response = call_app(app, "GET", "/api/state")
+    assert state_response["json"]["notebook_notes"][0]["body"] == "Updated synthesis"
+
+    invalid_response = call_app(
+        app,
+        "POST",
+        "/api/notebook",
+        {"title": "Invalid", "document_ids": [999]},
+    )
+    assert invalid_response["status"].startswith("400")
+
+    delete_response = call_app(app, "DELETE", f"/api/notebook/{note["id"]}")
+    assert delete_response["status"].startswith("200")
+    assert call_app(app, "GET", "/api/notebook")["json"]["notebook_notes"] == []
+
+
+def test_notebook_attachment_routes_store_pasted_images(tmp_path, monkeypatch):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    app = DocuTrackerWebApp(config_dir=str(config_dir), cwd=str(tmp_path))
+
+    encoded = base64.b64encode(b"png-bytes").decode("ascii")
+    create_response = call_app(
+        app,
+        "POST",
+        "/api/notebook/attachments",
+        {"data_url": "data:image/png;base64," + encoded},
+    )
+
+    assert create_response["status"].startswith("201")
+    assert create_response["json"]["content_type"] == "image/png"
+    assert create_response["json"]["url"].startswith("/api/notebook/attachments/")
+
+    fetch_response = call_app(app, "GET", create_response["json"]["url"])
+    headers = {name.lower(): value for name, value in fetch_response["headers"]}
+    assert fetch_response["status"].startswith("200")
+    assert headers["content-type"] == "image/png"
+    assert fetch_response["body"] == b"png-bytes"
+
+    binary_response = call_app(
+        app,
+        "POST",
+        "/api/notebook/attachments?name=pasted.png",
+        body=b"raw-png-bytes",
+        content_type="image/png",
+    )
+    assert binary_response["status"].startswith("201")
+    binary_fetch = call_app(app, "GET", binary_response["json"]["url"])
+    assert binary_fetch["body"] == b"raw-png-bytes"
+
+    invalid_response = call_app(
+        app,
+        "POST",
+        "/api/notebook/attachments",
+        {"data_url": "data:text/plain;base64," + encoded},
+    )
+    assert invalid_response["status"].startswith("400")
+
+
 def test_waiting_to_scan_route_counts_supported_files(tmp_path, monkeypatch):
     config_dir = tmp_path / "config"
     config_dir.mkdir()
@@ -505,6 +613,106 @@ def test_last_session_close_triggers_shutdown(tmp_path, monkeypatch):
     assert open_response["status"].startswith("200")
     assert close_response["status"].startswith("200")
     assert shutdown_calls == [True]
+
+
+def test_unknown_session_close_does_not_trigger_shutdown(tmp_path, monkeypatch):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    app = DocuTrackerWebApp(config_dir=str(config_dir), cwd=str(tmp_path))
+
+    shutdown_calls = []
+
+    class ImmediateTimer:
+        def __init__(self, interval, callback):
+            self.callback = callback
+            self.daemon = False
+
+        def start(self):
+            self.callback()
+
+        def cancel(self):
+            pass
+
+    app.shutdown_callback = lambda: shutdown_calls.append(True)
+
+    with patch("docu_tracker.web.threading.Timer", ImmediateTimer):
+        close_response = call_app(
+            app,
+            "POST",
+            "/api/session/close",
+            {"session_id": "stale-tab"},
+        )
+
+    assert close_response["status"].startswith("200")
+    assert shutdown_calls == []
+
+
+
+def test_serve_web_app_falls_back_when_port_is_busy(tmp_path):
+    calls = []
+
+    class FakeServer:
+        server_port = 9123
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def shutdown(self):
+            pass
+
+        def serve_forever(self):
+            pass
+
+    def fake_make_server(host, port, app, server_class, handler_class):
+        calls.append((host, port))
+        if len(calls) == 1:
+            raise OSError(errno.EADDRINUSE, "Address already in use")
+        return FakeServer()
+
+    with patch("docu_tracker.web.make_server", fake_make_server):
+        DocuTrackerWebApp(config_dir=str(tmp_path / "config"), cwd=str(tmp_path))
+        from docu_tracker.web import serve_web_app
+
+        serve_web_app(host="127.0.0.1", port=8421, config_dir=str(tmp_path / "config"), cwd=str(tmp_path))
+
+    assert calls == [("127.0.0.1", 8421), ("127.0.0.1", 0)]
+
+
+def test_notebook_topics_round_trip(tmp_path, monkeypatch):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    app = DocuTrackerWebApp(config_dir=str(config_dir), cwd=str(tmp_path))
+
+    created = call_app(
+        app, "POST", "/api/notebook",
+        {"title": "Topic note", "topics": ["Work"]},
+    )
+    assert created["status"].startswith("201")
+    assert created["json"]["note"]["topics"] == ["Work"]
+
+    note_id = created["json"]["note"]["id"]
+    updated = call_app(
+        app, "PATCH", f"/api/notebook/{note_id}",
+        {"topics": ["Academic"]},
+    )
+    assert updated["json"]["note"]["topics"] == ["Academic"]
+
+    bad = call_app(
+        app, "POST", "/api/notebook",
+        {"title": "Bad", "topics": "Work"},
+    )
+    assert bad["status"].startswith("400")
+
+    bad_item = call_app(
+        app, "POST", "/api/notebook",
+        {"title": "Bad", "topics": [42]},
+    )
+    assert bad_item["status"].startswith("400")
 
 
 def test_web_command_invokes_server(tmp_path, monkeypatch):

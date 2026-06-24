@@ -1,4 +1,6 @@
 import os
+import time
+
 import pytest
 from datetime import datetime, timezone
 from docu_tracker.db import Database
@@ -389,3 +391,43 @@ def test_untag_document(db):
     doc = db.get_document(doc_id)
     assert "Academic" not in doc["topics"]
     assert "Work" in doc["topics"]
+
+
+def test_notebook_note_topics_round_trip(db):
+    """Should set and read topics on a note, ignoring unknown topic names."""
+    note_id = db.add_notebook_note("Synthesis", body="body")
+    db.set_notebook_note_topics(note_id, ["Work", "Nonexistent", "Academic"])
+    note = db.get_notebook_note(note_id)
+    assert note["topics"] == ["Academic", "Work"]  # known only, name-ordered
+
+
+def test_notebook_note_topics_survive_rename(db):
+    """Renaming a topic should keep the note's link (stored by id)."""
+    note_id = db.add_notebook_note("Synthesis")
+    db.set_notebook_note_topics(note_id, ["Work"])
+    db.rename_topic("Work", "Career")
+    assert db.get_notebook_note(note_id)["topics"] == ["Career"]
+
+
+def test_remove_topic_deletes_note_topic_links(db):
+    """Removing a topic should drop it from notes (no re-home to Other)."""
+    note_id = db.add_notebook_note("Note")
+    db.set_notebook_note_topics(note_id, ["Work"])
+    db.remove_topic("Work")
+    assert db.get_notebook_note(note_id)["topics"] == []
+
+
+def test_add_notebook_note_with_topics(db):
+    note_id = db.add_notebook_note("Note", body="b", topics=["Work"])
+    assert db.get_notebook_note(note_id)["topics"] == ["Work"]
+
+
+def test_update_notebook_note_replaces_topics(db):
+    note_id = db.add_notebook_note("Note", topics=["Work"])
+    created_at = db.get_notebook_note(note_id)["created_at"]
+    time.sleep(0.001)  # ensure the clock advances past created_at
+    db.update_notebook_note(note_id, topics=["Academic"])
+    note = db.get_notebook_note(note_id)
+    assert note["topics"] == ["Academic"]
+    # updated_at bumps even when only topics change
+    assert note["updated_at"] > created_at
