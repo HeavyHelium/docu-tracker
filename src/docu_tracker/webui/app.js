@@ -741,6 +741,7 @@ function markdownToolbarHtml() {
     ["inline-math", "pi"],
     ["display-math", "$$"],
     ["image", "Image"],
+    ["color", "Color"],
     ["rule", "-"],
   ];
   return `
@@ -763,9 +764,13 @@ function selectedTextareaRange(textarea) {
 function replaceTextareaRange(textarea, nextValue, selectionStart, selectionEnd, options = {}) {
   const { autosave = true } = options;
   const { start, end } = selectedTextareaRange(textarea);
+  // Setting .value collapses the caret to the end and focus() then jumps the view
+  // there; capture the scroll position and restore it after re-selecting.
+  const scrollTop = textarea.scrollTop;
   textarea.value = textarea.value.slice(0, start) + nextValue + textarea.value.slice(end);
-  textarea.focus();
+  textarea.focus({ preventScroll: true });
   textarea.setSelectionRange(start + selectionStart, start + selectionEnd);
+  textarea.scrollTop = scrollTop;
   updateNotebookPreview();
   if (autosave) scheduleNotebookAutosave();
 }
@@ -777,9 +782,11 @@ function prefixSelectedLines(textarea, prefix) {
   const lineEnd = lineEndIndex === -1 ? textarea.value.length : lineEndIndex;
   const block = textarea.value.slice(lineStart, lineEnd);
   const nextBlock = block.split("\n").map((line) => prefix + line).join("\n");
+  const scrollTop = textarea.scrollTop;
   textarea.value = textarea.value.slice(0, lineStart) + nextBlock + textarea.value.slice(lineEnd);
-  textarea.focus();
+  textarea.focus({ preventScroll: true });
   textarea.setSelectionRange(lineStart, lineStart + nextBlock.length);
+  textarea.scrollTop = scrollTop;
   updateNotebookPreview();
   scheduleNotebookAutosave();
 }
@@ -804,6 +811,7 @@ function applyMarkdownToolbarAction(action) {
   if (action === "display-math") return replaceTextareaRange(textarea, `\n$$\n${selected || "x = y"}\n$$\n`, 4, 4 + (selected || "x = y").length);
   if (action === "link") return replaceTextareaRange(textarea, `[${selected || "title"}](https://example.com)`, 1, 1 + (selected || "title").length);
   if (action === "image") return replaceTextareaRange(textarea, `![${selected || "image"}](https://example.com/image.png)`, 2, 2 + (selected || "image").length);
+  if (action === "color") return replaceTextareaRange(textarea, `:red[${text}]`, 5, 5 + text.length);
 }
 
 function imageMarkdownAlt(file, index = 0) {
@@ -925,9 +933,8 @@ function renderInlineMarkdown(value) {
     .replace(/\$(?!\$)([^\n$]+?)\$/g, stashMath);
 
   text = escapeHtml(text);
-  text = text.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+&quot;([^&]*)&quot;)?\)/g, (_match, alt, url, title) => {
-    const titleAttribute = title ? ` title="${escapeAttribute(title)}"` : "";
-    return `<img src="${escapeAttribute(safeMarkdownUrl(url))}" alt="${escapeAttribute(alt)}"${titleAttribute} loading="lazy">`;
+  text = text.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+&quot;([^&]*)&quot;)?\)(?:\{([^}]*)\})?/g, (_match, alt, url, title, attrs) => {
+    return buildImageTag(alt, url, title, attrs);
   });
   text = text.replace(/\[([^\]]+)\]\(([^)\s]+)(?:\s+&quot;([^&]*)&quot;)?\)/g, (_match, label, url, title) => {
     const titleAttribute = title ? ` title="${escapeAttribute(title)}"` : "";
@@ -937,6 +944,13 @@ function renderInlineMarkdown(value) {
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/\*([^*]+)\*/g, "<em>$1</em>");
 
+  // Colored text: :red[text] or :#0b6e62[text]. The color is sanitized so it can't
+  // break out of the style attribute; unrecognized colors are left as literal text.
+  text = text.replace(/:(#[0-9a-fA-F]{3,8}|[a-zA-Z]+)\[([^\]]+)\]/g, (match, color, inner) => {
+    const safe = sanitizeColor(color);
+    return safe ? `<span style="color:${safe}">${inner}</span>` : match;
+  });
+
   for (const [index, code] of codeSpans.entries()) {
     text = text.replaceAll(`@@CODE${index}@@`, code);
   }
@@ -944,6 +958,49 @@ function renderInlineMarkdown(value) {
     text = text.replaceAll(`@@MATH${index}@@`, math);
   }
   return text;
+}
+
+// Only allow hex colors and bare color names so the value can't break out of the
+// inline style attribute. Returns null for anything else.
+function sanitizeColor(value) {
+  const v = String(value).trim();
+  if (/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(v)) return v;
+  if (/^[a-zA-Z]+$/.test(v)) return v.toLowerCase();
+  return null;
+}
+
+function normalizeDimension(value) {
+  return /^\d+$/.test(value) ? `${value}px` : value;
+}
+
+// Turn a `{width=320 height=200}` attribute block into a sanitized inline style.
+function imageSizeStyle(attrs) {
+  if (!attrs) return "";
+  const dims = [];
+  const width = /(?:^|[\s;,])width\s*=\s*(\d+(?:px|%)?)/i.exec(attrs);
+  const height = /(?:^|[\s;,])height\s*=\s*(\d+(?:px|%)?)/i.exec(attrs);
+  if (width) dims.push(`width:${normalizeDimension(width[1])}`);
+  if (height) dims.push(`height:${normalizeDimension(height[1])}`);
+  if (!dims.length) return "";
+  dims.push("max-width:100%");
+  return ` style="${dims.join(";")}"`;
+}
+
+function buildImageTag(alt, url, title, attrs) {
+  const titleAttribute = title ? ` title="${escapeAttribute(title)}"` : "";
+  return `<img src="${escapeAttribute(safeMarkdownUrl(url))}" alt="${escapeAttribute(alt)}"${titleAttribute}${imageSizeStyle(attrs)} loading="lazy">`;
+}
+
+// A line that is nothing but an image becomes a <figure>; its title is the caption.
+function standaloneImageMatch(line) {
+  const match = String(line).match(/^!\[([^\]]*)\]\((\S+?)(?:\s+"([^"]*)")?\)(?:\{([^}]*)\})?$/);
+  return match ? { alt: match[1], url: match[2], title: match[3] || "", attrs: match[4] || "" } : null;
+}
+
+function renderFigure({ alt, url, title, attrs }) {
+  const img = buildImageTag(alt, url, title, attrs);
+  const caption = title ? `<figcaption>${renderInlineMarkdown(title)}</figcaption>` : "";
+  return `<figure class="notebook-figure">${img}${caption}</figure>`;
 }
 
 function splitMarkdownTableRow(line) {
@@ -1190,6 +1247,14 @@ function renderMarkdown(value) {
       continue;
     }
 
+    const figure = standaloneImageMatch(trimmed);
+    if (figure) {
+      flushParagraph();
+      flushList();
+      html.push(renderFigure(figure));
+      continue;
+    }
+
     flushList();
     paragraph.push(trimmed);
   }
@@ -1304,7 +1369,7 @@ function renderNotebookEditor(note) {
       </div>
       <div class="notebook-editor-actions">
         <button id="notebook-export-all" class="button button-striped" type="button">Export all</button>
-        <button id="notebook-export" class="button" type="button">Export PDF</button>
+        <button id="notebook-export" class="button" type="button">Open alone</button>
         <button id="notebook-save" class="button button-primary" type="button">Save</button>
         <button id="notebook-delete" class="button button-danger" type="button">Delete</button>
       </div>
@@ -1317,13 +1382,11 @@ function renderNotebookEditor(note) {
       </label>
       <div class="notebook-resizer notebook-compose-resizer" data-resizer="notebook-compose" role="separator" aria-orientation="vertical" aria-label="Resize markdown preview"></div>
       <section class="notebook-preview-panel">
-        <div class="notebook-preview-header">
-          <p class="section-kicker">Preview</p>
-          <div class="notebook-scroll-align" role="group" aria-label="Align pane scrolling">
-            <button type="button" id="notebook-align-editor" class="notebook-align-button" title="Scroll the editor to the preview's position">↧ Match preview</button>
-            <button type="button" id="notebook-align-preview" class="notebook-align-button" title="Scroll the preview to the editor's position">Match editor ↧</button>
-          </div>
+        <div class="notebook-scroll-align" role="group" aria-label="Align pane scrolling">
+          <button type="button" id="notebook-align-preview" class="notebook-align-button" title="Scroll preview to match the editor" aria-label="Scroll preview to match the editor">→</button>
+          <button type="button" id="notebook-align-editor" class="notebook-align-button" title="Scroll editor to match the preview" aria-label="Scroll editor to match the preview">←</button>
         </div>
+        <p class="section-kicker">Preview</p>
         <div id="notebook-preview" class="notebook-markdown-preview"><div class="notebook-preview-document">${renderMarkdown(note.body)}</div></div>
       </section>
     </div>
@@ -1386,6 +1449,13 @@ const PDF_PRINT_CSS = `
   p { margin: 0 0 1rem; }
   a { color: #0b6e62; word-break: break-word; }
   img { max-width: 100%; height: auto; display: block; margin: 1rem auto; }
+  figure { margin: 1.4rem auto; text-align: center; }
+  figure img { margin: 0 auto; }
+  figcaption { margin-top: 0.5rem; font-size: 0.9rem; color: #555; font-style: italic; }
+  .pdf-toolbar { display: flex; justify-content: flex-end; max-width: 42rem; margin: 0 auto; padding: 0 0 0.5rem; }
+  .pdf-toolbar button { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 50%; cursor: pointer; border: 1px solid #d8d3c7; background: #fff; color: #0b6e62; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08); transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease; }
+  .pdf-toolbar button:hover { background: #0b6e62; border-color: #0b6e62; color: #fff; }
+  @media print { .pdf-toolbar { display: none; } }
   .pdf-note-topics { margin: 0 0 1.2rem; }
   .pdf-note-topics span { display: inline-block; font-size: 0.75rem; padding: 0.1rem 0.5rem; margin-right: 0.3rem; border: 1px solid #999; border-radius: 999px; }
   .pdf-linked { margin-top: 1.8rem; border-top: 1px solid #ccc; padding-top: 0.8rem; }
@@ -1405,43 +1475,34 @@ const PDF_PRINT_CSS = `
   .math-inline svg, .math-display svg { max-width: 100%; }
 `;
 
-function awaitImages(win) {
-  const images = Array.from(win.document.images || []);
-  const pending = images.filter((img) => !img.complete);
-  if (!pending.length) return Promise.resolve();
-  return Promise.race([
-    Promise.all(pending.map((img) => new Promise((resolve) => {
-      img.addEventListener("load", resolve, { once: true });
-      img.addEventListener("error", resolve, { once: true });
-    }))),
-    new Promise((resolve) => win.setTimeout(resolve, 3000)),
-  ]);
-}
+// Toolbar shown at the top of the export tab: a single download icon that calls
+// print() on click (instead of auto-printing) and is hidden in the printed output.
+const PDF_TOOLBAR_HTML =
+  `<div class="pdf-toolbar"><button type="button" onclick="window.print()" title="Save as PDF" aria-label="Save as PDF">` +
+  `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 11 5 5 5-5"/><path d="M5 21h14"/></svg>` +
+  `</button></div>`;
 
 // `sectionsHtml` MUST already be escaped/sanitized by the caller (see
-// buildNoteExportSection); PDF_PRINT_CSS is a static constant. Both are written
-// verbatim into the popup document, so never pass unsanitized user input here.
+// buildNoteExportSection); PDF_PRINT_CSS / PDF_TOOLBAR_HTML are static constants.
+// All are written verbatim into the document, so never pass unsanitized input here.
 async function openNotePrintWindow(docTitle, sectionsHtml) {
-  // Open synchronously so the popup isn't blocked, then render math before writing.
+  // Open synchronously so the tab isn't blocked, then render math before writing.
   const win = window.open("", "_blank");
   if (!win) {
-    showFlash("Could not open the print window — allow popups for this site.", "error");
+    showFlash("Could not open the export tab — allow popups for this site.", "error");
     return;
   }
-  // MathJax isn't loaded in the popup, so pre-render the LaTeX to SVG here and embed
-  // the result (plus MathJax's glyph stylesheet) into the printed document.
+  // MathJax isn't loaded in the new tab, so pre-render the LaTeX to SVG here and embed
+  // the result (plus MathJax's glyph stylesheet) into the document.
   const staged = document.createElement("div");
   staged.className = "pdf-document";
   staged.innerHTML = sectionsHtml;
   await typesetMathAsync(staged).catch(() => {});
   const css = `${PDF_PRINT_CSS}${mathStylesheetCss()}`;
-  win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(docTitle)}</title><style>${css}</style></head><body>${staged.outerHTML}</body></html>`);
+  win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(docTitle)}</title><style>${css}</style></head><body>${PDF_TOOLBAR_HTML}${staged.outerHTML}</body></html>`);
   win.document.close();
-  awaitImages(win).then(() => {
-    if (win.closed) return;  // user may have closed the popup before images settled
-    win.focus();
-    win.print();
-  }).catch(() => {});
+  // Don't auto-print: the standalone page stays open and the user clicks Save as PDF.
+  win.focus();
 }
 
 async function exportNoteToPdf() {

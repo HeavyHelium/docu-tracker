@@ -1506,38 +1506,52 @@ body.is-resizing-notebook {
 
 .notebook-preview-panel {
   align-content: stretch;
+  position: relative;
 }
 
-.notebook-preview-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
+/* Overleaf-style scroll-sync control floating on the divider between the panes.
+   Absolutely positioned so it never affects the pane header heights/alignment. */
 .notebook-scroll-align {
+  position: absolute;
+  top: 50%;
+  /* -13px = middle of the divider region (8px gap + 10px resizer + 8px gap). */
+  left: -13px;
+  transform: translate(-50%, -50%);
+  z-index: 5;
   display: flex;
-  gap: 6px;
+  flex-direction: column;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 10px;
+  background: rgba(36, 53, 48, 0.92);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
 }
 
 .notebook-align-button {
-  border: 1px solid rgba(50, 71, 67, 0.16);
-  border-radius: 999px;
-  background: rgba(255, 251, 244, 0.8);
-  color: var(--muted);
-  font-size: 0.74rem;
-  font-weight: 700;
-  padding: 3px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #fff;
+  font-size: 0.95rem;
+  line-height: 1;
   cursor: pointer;
-  white-space: nowrap;
-  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  transition: background 0.15s ease;
 }
 
 .notebook-align-button:hover {
-  background: rgba(11, 110, 98, 0.1);
-  border-color: rgba(11, 110, 98, 0.3);
-  color: var(--accent-strong);
+  background: rgba(255, 255, 255, 0.18);
+}
+
+@media (max-width: 820px) {
+  .notebook-scroll-align {
+    display: none;
+  }
 }
 
 .notebook-markdown-preview {
@@ -1659,6 +1673,27 @@ body.is-resizing-notebook {
 
 .notebook-preview-empty {
   color: var(--muted);
+}
+
+.notebook-markdown-preview img {
+  max-width: 100%;
+  height: auto;
+}
+
+.notebook-figure {
+  margin: 14px auto;
+  text-align: center;
+}
+
+.notebook-figure img {
+  margin: 0 auto;
+}
+
+.notebook-figure figcaption {
+  margin-top: 6px;
+  font-size: 0.86rem;
+  color: var(--muted);
+  font-style: italic;
 }
 
 .notebook-title-input {
