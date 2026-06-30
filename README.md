@@ -17,6 +17,7 @@ Stop losing track of papers and documents. Scan once, find anything instantly.
 - **Parallel processing** — LLM calls run concurrently (4 workers) for fast bulk scanning
 - **Rich terminal UI** — colored tables, status indicators, and detailed panels
 - **Local web UI** — edit document details, status, and topics in a browser, open files directly, and run scan/rescan workflows
+- **HTML notebooks** — catalog standalone HTML documents (e.g. literature maps), open them in a click, and have the notes you take inside them persist durably (per notebook), or import them read-only
 
 ## Installation
 
@@ -136,6 +137,7 @@ The web UI provides:
 - metadata rescan for all documents or a single document
 - interactive topic & document graph view with dynamic filtering, selection highlighting, and freeze physics controls
 - a research notebook for durable synthesis notes with a live markdown preview (see below)
+- an HTML Notebooks view for cataloging and viewing standalone HTML documents (see below)
 
 #### Research notebook
 
@@ -155,6 +157,29 @@ markdown it supports:
 - **Export** — *Open alone* opens the note(s) as a standalone, print-ready page; click the
   download icon and choose "Save as PDF" as the destination. *Export all* does the same for the
   whole notebook.
+
+#### HTML Notebooks
+
+The **HTML Notebooks** view (toggle button in the library header) catalogs standalone,
+self-contained HTML documents — for example a generated literature map or report — so you can
+keep them alongside your tracked papers, open them in one click, and have any notes you take
+*inside* them persist durably.
+
+- **Add by path** — point it at any `.html`/`.htm` file on disk and give it an optional title
+  (defaults to the filename).
+- **Managed copy** — on add, docu-tracker imports a *copy* into `~/.docu-tracker/notebooks/`;
+  your original file is read once and never modified afterward. **Remove** deletes the managed
+  copy (your original stays put).
+- **Open** — renders the full, interactive document in a new browser tab.
+- **Notes that stick** — many of these documents have their own built-in notes/annotation
+  workspace that normally saves only to fragile browser `localStorage`. When you Open a notebook
+  from docu-tracker, a small bridge makes that workspace **durable and per-notebook**: your notes
+  are saved to docu-tracker, loaded back the next time you open it, and kept separate from every
+  other notebook (so two documents never overwrite each other's notes). You just take notes in
+  the document's own UI — there's nothing extra to click.
+- **Read-only** — tick the *Read-only* box when adding to import a notebook whose notes are
+  **frozen**: its saved notes still load when you open it, but changes aren't written back. These
+  entries show a **read-only** badge and offer just **Open** and **Remove**.
 
 If you want the web UI to work no matter which directory you launch it from, prefer storing your key and default scan paths in `~/.docu-tracker/config.yaml` instead of relying on a repo-local `.env`.
 

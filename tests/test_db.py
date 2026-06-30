@@ -431,3 +431,56 @@ def test_update_notebook_note_replaces_topics(db):
     assert note["topics"] == ["Academic"]
     # updated_at bumps even when only topics change
     assert note["updated_at"] > created_at
+
+
+def test_html_notebook_crud(tmp_path):
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+
+    nb_id = db.add_html_notebook("Lit Map", "/src/map.html", "stored-1.html")
+    assert isinstance(nb_id, int)
+
+    nb = db.get_html_notebook(nb_id)
+    assert nb["title"] == "Lit Map"
+    assert nb["source_path"] == "/src/map.html"
+    assert nb["stored_filename"] == "stored-1.html"
+    assert nb["created_at"] and nb["updated_at"]
+
+    before = nb["updated_at"]
+    db.update_html_notebook(nb_id, title="Renamed")
+    assert db.get_html_notebook(nb_id)["title"] == "Renamed"
+    assert db.get_html_notebook(nb_id)["updated_at"] >= before
+
+    db.add_html_notebook("Second", "/src/b.html", "stored-2.html")
+    # list_html_notebooks orders most-recently-touched first (matching notebook_notes):
+    # "Second" was just inserted, so it sorts ahead of the earlier-updated "Renamed".
+    assert [n["title"] for n in db.list_html_notebooks()] == ["Second", "Renamed"]
+
+    db.delete_html_notebook(nb_id)
+    assert db.get_html_notebook(nb_id) is None
+    db.close()
+
+
+def test_html_notebook_read_only_flag(tmp_path):
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+
+    editable_id = db.add_html_notebook("Editable", "/src/e.html", "e.html")
+    ro_id = db.add_html_notebook("Reader", "/src/r.html", "r.html", read_only=True)
+
+    assert db.get_html_notebook(editable_id)["read_only"] is False
+    assert db.get_html_notebook(ro_id)["read_only"] is True
+    db.close()
+
+
+def test_html_notebook_notes_state(tmp_path):
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+
+    nb_id = db.add_html_notebook("Map", "/src/m.html", "m.html")
+    # notes default to an empty JSON object
+    assert db.get_html_notebook(nb_id)["notes_state"] == "{}"
+
+    db.set_html_notebook_notes(nb_id, '{"key": "value"}')
+    assert db.get_html_notebook(nb_id)["notes_state"] == '{"key": "value"}'
+    db.close()

@@ -1,6 +1,7 @@
 const state = {
   documents: [],
   notebookNotes: [],
+  htmlNotebooks: [],
   selectedNoteId: null,
   notebookReferenceSearch: "",
   topics: [],
@@ -96,9 +97,13 @@ const els = {
   activityLog: document.getElementById("activity-log"),
   flash: document.getElementById("flash"),
   viewToggleBtn: document.getElementById("view-toggle-btn"),
+  libraryToggleBtn: document.getElementById("library-toggle-btn"),
+  libraryBackBtn: document.getElementById("library-back-btn"),
   notebookToggleBtn: document.getElementById("notebook-toggle-btn"),
   graphContainer: document.getElementById("graph-container"),
   notebookContainer: document.getElementById("notebook-container"),
+  htmlNotebooksToggleBtn: document.getElementById("html-notebooks-toggle-btn"),
+  htmlNotebookContainer: document.getElementById("html-notebook-container"),
   tablePanel: document.querySelector(".table-panel"),
   freezePhysicsCheckbox: document.getElementById("freeze-physics-checkbox"),
 };
@@ -136,6 +141,7 @@ async function loadState(keepSelection = true) {
   state.statuses = payload.statuses;
   state.scanPaths = payload.scan_paths;
   state.notebookNotes = payload.notebook_notes || [];
+  state.htmlNotebooks = payload.html_notebooks || [];
   state.waitingToScan = null;
   state.oldestWaitingModifiedAt = null;
   state.waitingToScanLoading = true;
@@ -149,6 +155,7 @@ async function loadState(keepSelection = true) {
   renderStats();
   renderDocuments();
   renderNotebook();
+  renderHtmlNotebooks();
   renderDetail();
   renderTopics();
   loadWaitingToScan();
@@ -1707,6 +1714,98 @@ async function deleteNotebookNote() {
   showFlash("Notebook note deleted.");
 }
 
+/* ==========================================================================
+   HTML Notebooks View
+   ========================================================================== */
+
+function htmlNotebookById(id) {
+  return state.htmlNotebooks.find((nb) => nb.id === id) || null;
+}
+
+function renderHtmlNotebooks() {
+  els.htmlNotebookContainer.innerHTML = `
+    <div class="html-notebook-layout">
+      <section class="html-notebook-list-panel">
+        <div class="html-notebook-add">
+          <p class="section-kicker">HTML Notebooks</p>
+          <h3>Imported Notebooks</h3>
+          <p class="html-notebook-hint muted">Open a notebook to view it and take notes in its own workspace — your notes save automatically, kept separate per notebook.</p>
+          <div class="html-notebook-add-form">
+            <input id="html-notebook-add-title" class="html-notebook-input" type="text" placeholder="Title (optional)">
+            <input id="html-notebook-add-path" class="html-notebook-input" type="text" placeholder="/path/to/notebook.html">
+            <label class="html-notebook-readonly-toggle" title="Import for reading only — its notes are frozen">
+              <input id="html-notebook-add-readonly" type="checkbox"> Read-only
+            </label>
+            <button id="html-notebook-add-btn" class="button button-primary" type="button">Add</button>
+          </div>
+        </div>
+        <div class="html-notebook-list">
+          ${state.htmlNotebooks.length ? state.htmlNotebooks.map((nb) => `
+            <div class="html-notebook-card">
+              <div class="html-notebook-card-info">
+                <strong>
+                  ${escapeHtml(nb.title || "Untitled notebook")}
+                  ${nb.read_only ? `<span class="html-notebook-badge">read-only</span>` : ""}
+                </strong>
+                <small class="muted">imported from ${escapeHtml(nb.source_path)}</small>
+                <small class="muted">Updated ${escapeHtml(formatDateTime(nb.updated_at))}</small>
+              </div>
+              <div class="html-notebook-card-actions">
+                <button type="button" class="button" data-html-open="${nb.id}">Open</button>
+                <button type="button" class="button button-danger" data-html-remove="${nb.id}">Remove</button>
+              </div>
+            </div>
+          `).join("") : `<div class="empty-state">Add an .html or .htm file to import it as a managed notebook.</div>`}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+async function addHtmlNotebook() {
+  const titleInput = els.htmlNotebookContainer.querySelector("#html-notebook-add-title");
+  const pathInput = els.htmlNotebookContainer.querySelector("#html-notebook-add-path");
+  const readOnlyInput = els.htmlNotebookContainer.querySelector("#html-notebook-add-readonly");
+  const path = (pathInput?.value || "").trim();
+  const title = (titleInput?.value || "").trim();
+  const readOnly = !!readOnlyInput?.checked;
+  if (!path) {
+    showFlash("Enter a path to an .html file.", "error");
+    return;
+  }
+  let result;
+  try {
+    const body = { path };
+    if (title) body.title = title;
+    if (readOnly) body.read_only = true;
+    result = await api("/api/html-notebooks", {
+      method: "POST",
+      body,
+    });
+  } catch (error) {
+    showFlash(error.message, "error");
+    return;
+  }
+  state.htmlNotebooks.unshift(result.notebook);
+  renderHtmlNotebooks();
+  els.htmlNotebookContainer.querySelector("#html-notebook-add-path")?.focus();
+  showFlash("HTML notebook added.");
+}
+
+async function removeHtmlNotebook(id) {
+  const nb = htmlNotebookById(id);
+  if (!window.confirm(`Remove "${nb?.title || "this notebook"}"? The managed copy will be deleted.`)) return;
+  try {
+    await api(`/api/html-notebooks/${id}`, { method: "DELETE" });
+  } catch (error) {
+    showFlash(error.message, "error");
+    return;
+  }
+  state.htmlNotebooks = state.htmlNotebooks.filter((item) => item.id !== id);
+  renderHtmlNotebooks();
+  showFlash("HTML notebook removed.");
+}
+
 function waitingScanTooltip() {
   if (state.waitingToScanLoading) {
     return "Checking configured folders for files changed since the last scan.";
@@ -2515,15 +2614,41 @@ els.notebookContainer.addEventListener("pointerdown", (event) => {
   startNotebookResize(event, resizer.dataset.resizer);
 });
 
+// HTML Notebooks view actions
+els.htmlNotebookContainer.addEventListener("click", async (event) => {
+  const addBtn = event.target.closest("#html-notebook-add-btn");
+  const openBtn = event.target.closest("[data-html-open]");
+  const removeBtn = event.target.closest("[data-html-remove]");
+  try {
+    if (addBtn) { await addHtmlNotebook(); return; }
+    if (openBtn) {
+      window.open(`/api/html-notebooks/${Number(openBtn.dataset.htmlOpen)}/open`, "_blank");
+      return;
+    }
+    if (removeBtn) { await removeHtmlNotebook(Number(removeBtn.dataset.htmlRemove)); return; }
+  } catch (error) {
+    showFlash(error.message, "error");
+  }
+});
+
+els.htmlNotebookContainer.addEventListener("keydown", (event) => {
+  if (event.target.matches("#html-notebook-add-path, #html-notebook-add-title") && event.key === "Enter") {
+    event.preventDefault();
+    addHtmlNotebook().catch((error) => showFlash(error.message, "error"));
+  }
+});
+
 function setLibraryViewMode(mode) {
   state.viewMode = mode;
   els.tablePanel.classList.toggle("graph-mode-active", mode === "graph");
   els.tablePanel.classList.toggle("notebook-mode-active", mode === "notebook");
+  els.tablePanel.classList.toggle("html-notebooks-mode-active", mode === "html-notebooks");
   document.body.classList.toggle("notebook-app-mode", mode === "notebook");
-  els.viewToggleBtn.textContent = mode === "graph" ? "List View" : "Graph View";
+  document.body.classList.toggle("html-notebook-app-mode", mode === "html-notebooks");
+  els.libraryToggleBtn.classList.toggle("active", mode === "list");
   els.viewToggleBtn.classList.toggle("active", mode === "graph");
-  els.notebookToggleBtn.textContent = mode === "notebook" ? "Library View" : "Notebook";
   els.notebookToggleBtn.classList.toggle("active", mode === "notebook");
+  els.htmlNotebooksToggleBtn.classList.toggle("active", mode === "html-notebooks");
 
   if (mode !== "graph" && state.networkInstance) {
     state.networkInstance.destroy();
@@ -2537,26 +2662,42 @@ function setLibraryViewMode(mode) {
     applyNotebookPaneSizes();
     renderNotebook();
   }
+  if (mode === "html-notebooks") {
+    renderHtmlNotebooks();
+  }
 }
 
 window.addEventListener("pagehide", closeBrowserSession);
 
-// Library view actions
-els.viewToggleBtn.addEventListener("click", async () => {
+// Library view actions — the hero "View" group acts like tabs: each button
+// selects its view, and "Library" always returns to the document table.
+async function switchLibraryView(mode) {
+  if (state.viewMode === mode) return;
+  // Flush the open research note before leaving the notebook view.
   if (state.viewMode === "notebook") {
     await saveNotebookNote({ renderAfterSave: false }).catch((error) => showFlash(error.message, "error"));
   }
-  setLibraryViewMode(state.viewMode === "graph" ? "list" : "graph");
+  setLibraryViewMode(mode);
+}
+
+els.libraryToggleBtn.addEventListener("click", () => {
+  switchLibraryView("list").catch((error) => showFlash(error.message, "error"));
+});
+els.libraryBackBtn.addEventListener("click", () => {
+  switchLibraryView("list").catch((error) => showFlash(error.message, "error"));
+});
+els.viewToggleBtn.addEventListener("click", () => {
+  switchLibraryView("graph").catch((error) => showFlash(error.message, "error"));
+});
+els.notebookToggleBtn.addEventListener("click", () => {
+  switchLibraryView("notebook").catch((error) => showFlash(error.message, "error"));
+});
+els.htmlNotebooksToggleBtn.addEventListener("click", () => {
+  switchLibraryView("html-notebooks").catch((error) => showFlash(error.message, "error"));
 });
 
-els.notebookToggleBtn.addEventListener("click", async () => {
-  if (state.viewMode === "notebook") {
-    await saveNotebookNote({ renderAfterSave: false }).catch((error) => showFlash(error.message, "error"));
-    setLibraryViewMode("list");
-    return;
-  }
-  setLibraryViewMode("notebook");
-});
+// Reflect the initial (list) view in the switcher's active state.
+setLibraryViewMode("list");
 
 // Freeze physics checkbox listener
 els.freezePhysicsCheckbox.addEventListener("change", (e) => {

@@ -2,6 +2,7 @@ import base64
 import errno
 import json
 import os
+import shutil
 import sys
 import threading
 import uuid
@@ -34,7 +35,7 @@ NOTEBOOK_ATTACHMENT_TYPES = {
     "image/webp": ".webp",
 }
 MAX_NOTEBOOK_ATTACHMENT_BYTES = 10 * 1024 * 1024
-
+HTML_NOTEBOOK_EXTENSIONS = {".html", ".htm"}
 
 
 class HTTPError(Exception):
@@ -153,6 +154,78 @@ def _serialize_notebook_note(note):
         "document_ids": note["document_ids"],
         "topics": note["topics"],
     }
+
+
+def _serialize_html_notebook(notebook):
+    return {
+        "id": notebook["id"],
+        "title": notebook["title"] or "",
+        "source_path": notebook["source_path"] or "",
+        "created_at": notebook["created_at"],
+        "updated_at": notebook["updated_at"],
+        "read_only": bool(notebook["read_only"]),
+    }
+
+
+def _parse_notes_state(raw):
+    """Parse a stored notes_state JSON string into a dict (defensively)."""
+    if not raw:
+        return {}
+    try:
+        value = json.loads(raw)
+    except (ValueError, TypeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _notes_bridge_script(notebook_id, notes_state, read_only):
+    """Build the localStorage-shadowing bridge that makes an HTML notebook's own
+    notes workspace durable and per-notebook. Seeded inline (race-free); writes
+    are mirrored back to the server unless the notebook is read-only (frozen)."""
+    # Escape "</" so embedded values can never close the <script> element early.
+    seed_json = json.dumps(notes_state).replace("</", "<\\/")
+    return (
+        "<script>(function(){"
+        "var ID=" + json.dumps(notebook_id) + ";"
+        "var RO=" + ("true" if read_only else "false") + ";"
+        "var SEED=" + seed_json + ";"
+        "var store={};for(var k in SEED){if(Object.prototype.hasOwnProperty.call(SEED,k)){store[k]=String(SEED[k]);}}"
+        "var t=null;"
+        "function save(){if(RO)return;if(t)clearTimeout(t);t=setTimeout(function(){"
+        "try{fetch('/api/html-notebooks/'+ID+'/notes',{method:'PUT',"
+        "headers:{'Content-Type':'application/json'},body:JSON.stringify(store)});}catch(e){}"
+        "},600);}"
+        "var shadow={"
+        "getItem:function(k){k=String(k);return Object.prototype.hasOwnProperty.call(store,k)?store[k]:null;},"
+        "setItem:function(k,v){store[String(k)]=String(v);save();},"
+        "removeItem:function(k){delete store[String(k)];save();},"
+        "clear:function(){store={};save();},"
+        "key:function(i){var ks=Object.keys(store);return i>=0&&i<ks.length?ks[i]:null;},"
+        "get length(){return Object.keys(store).length;}};"
+        "try{Object.defineProperty(window,'localStorage',{configurable:true,value:shadow});}"
+        "catch(e){try{"
+        "Storage.prototype.getItem=function(k){return shadow.getItem(k);};"
+        "Storage.prototype.setItem=function(k,v){shadow.setItem(k,v);};"
+        "Storage.prototype.removeItem=function(k){shadow.removeItem(k);};"
+        "Storage.prototype.clear=function(){shadow.clear();};"
+        "}catch(e2){}}"
+        "})();</script>"
+    )
+
+
+def _inject_notes_bridge(html, notebook_id, notes_state, read_only):
+    """Insert the notes bridge as early as possible so it runs before the
+    notebook's own scripts read localStorage."""
+    import re
+
+    script = _notes_bridge_script(notebook_id, notes_state, read_only)
+    for pattern in (r"<head[^>]*>", r"<html[^>]*>"):
+        match = re.search(pattern, html, re.IGNORECASE)
+        if match:
+            idx = match.end()
+            return html[:idx] + script + html[idx:]
+    return script + html
+
 
 def _configured_scan_paths(config):
     return [
@@ -317,6 +390,11 @@ class DocuTrackerWebApp:
                 payload = self._parse_json(environ)
                 return _json_response(start_response, 200, self.close_session(payload))
 
+            if path == "/api/html-notebooks" and method == "POST":
+                payload = self._parse_json(environ)
+                return _json_response(start_response, 201, self.create_html_notebook(payload))
+            if path.startswith("/api/html-notebooks/"):
+                return self._handle_html_notebook_route(path, method, environ, start_response)
             if path.startswith("/api/notebook/"):
                 return self._handle_notebook_route(path, method, environ, start_response)
             if path.startswith("/api/documents/"):
@@ -485,11 +563,15 @@ class DocuTrackerWebApp:
                 _serialize_notebook_note(note)
                 for note in db.list_notebook_notes()
             ]
+            html_notebooks = [
+                _serialize_html_notebook(nb) for nb in db.list_html_notebooks()
+            ]
         return {
             "documents": docs,
             "topics": topics,
             "scan_paths": config.get("scan_paths", []),
             "notebook_notes": notebook_notes,
+            "html_notebooks": html_notebooks,
             "model": config.get("model"),
             "has_api_key": bool(config.get("anthropic_api_key")),
             "statuses": VALID_STATUSES,
@@ -603,6 +685,124 @@ class DocuTrackerWebApp:
             db.delete_notebook_note(note_id)
         return {"ok": True}
 
+
+    def _html_notebook_dir(self):
+        return Path(self.config_dir) / "notebooks"
+
+    def _html_notebook_path(self, notebook):
+        return self._html_notebook_dir() / notebook["stored_filename"]
+
+    def create_html_notebook(self, payload):
+        raw_path = (payload.get("path") or "").strip()
+        if not raw_path:
+            raise HTTPError(400, "Notebook path is required")
+        source = Path(os.path.abspath(os.path.expanduser(raw_path)))
+        if not source.exists() or not source.is_file():
+            raise HTTPError(400, f"No file found at {raw_path}")
+        if source.suffix.lower() not in HTML_NOTEBOOK_EXTENSIONS:
+            raise HTTPError(400, "Notebook must be an .html or .htm file")
+
+        title = (payload.get("title") or "").strip() or source.name
+        read_only = bool(payload.get("read_only"))
+        notebook_dir = self._html_notebook_dir()
+        notebook_dir.mkdir(parents=True, exist_ok=True)
+        stored_filename = (
+            f"{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex}.html"
+        )
+        shutil.copyfile(source, notebook_dir / stored_filename)
+
+        with database_for_path(self.db_path) as db:
+            notebook_id = db.add_html_notebook(
+                title, str(source), stored_filename, read_only=read_only
+            )
+            return {"notebook": _serialize_html_notebook(db.get_html_notebook(notebook_id))}
+
+    def update_html_notebook(self, notebook_id, payload):
+        with database_for_path(self.db_path) as db:
+            notebook = db.get_html_notebook(notebook_id)
+            if not notebook:
+                raise HTTPError(404, f"HTML notebook {notebook_id} not found")
+
+            title = payload.get("title") if "title" in payload else None
+            if title is not None:
+                if not isinstance(title, str):
+                    raise HTTPError(400, "Notebook title must be a string")
+                title = title.strip()
+                if not title:
+                    raise HTTPError(400, "Notebook title is required")
+                db.update_html_notebook(notebook_id, title=title)
+            return {"notebook": _serialize_html_notebook(db.get_html_notebook(notebook_id))}
+
+    def delete_html_notebook(self, notebook_id):
+        with database_for_path(self.db_path) as db:
+            notebook = db.get_html_notebook(notebook_id)
+            if not notebook:
+                raise HTTPError(404, f"HTML notebook {notebook_id} not found")
+            stored_path = self._html_notebook_path(notebook)
+            db.delete_html_notebook(notebook_id)
+        if stored_path.exists():
+            stored_path.unlink()
+        return {"ok": True}
+
+    def get_html_notebook_notes(self, notebook_id):
+        with database_for_path(self.db_path) as db:
+            notebook = db.get_html_notebook(notebook_id)
+            if not notebook:
+                raise HTTPError(404, f"HTML notebook {notebook_id} not found")
+            return _parse_notes_state(notebook["notes_state"])
+
+    def save_html_notebook_notes(self, notebook_id, payload):
+        if not isinstance(payload, dict):
+            raise HTTPError(400, "Notes state must be a JSON object")
+        with database_for_path(self.db_path) as db:
+            notebook = db.get_html_notebook(notebook_id)
+            if not notebook:
+                raise HTTPError(404, f"HTML notebook {notebook_id} not found")
+            if notebook["read_only"]:
+                raise HTTPError(400, "This notebook is read-only; its notes are frozen")
+            db.set_html_notebook_notes(notebook_id, json.dumps(payload))
+        return {"ok": True}
+
+    def stream_html_notebook(self, notebook_id, start_response):
+        with database_for_path(self.db_path) as db:
+            notebook = db.get_html_notebook(notebook_id)
+            if not notebook:
+                raise HTTPError(404, f"HTML notebook {notebook_id} not found")
+            stored_path = self._html_notebook_path(notebook)
+            notes_state = _parse_notes_state(notebook["notes_state"])
+            read_only = bool(notebook["read_only"])
+        if not stored_path.exists():
+            raise HTTPError(404, "Notebook file is missing")
+        html = stored_path.read_text(encoding="utf-8", errors="replace")
+        injected = _inject_notes_bridge(html, notebook_id, notes_state, read_only)
+        return _text_response(
+            start_response, 200, injected, "text/html; charset=utf-8"
+        )
+
+    def _handle_html_notebook_route(self, path, method, environ, start_response):
+        parts = [unquote(part) for part in path.split("/") if part]
+        # parts == ["api", "html-notebooks", "<id>", optional "open"/"notes"]
+        if len(parts) < 3:
+            raise HTTPError(404, "Not found")
+        try:
+            notebook_id = int(parts[2])
+        except ValueError as exc:
+            raise HTTPError(400, "Notebook id must be an integer") from exc
+
+        if len(parts) == 3 and method == "PATCH":
+            payload = self._parse_json(environ)
+            return _json_response(start_response, 200, self.update_html_notebook(notebook_id, payload))
+        if len(parts) == 3 and method == "DELETE":
+            return _json_response(start_response, 200, self.delete_html_notebook(notebook_id))
+        if len(parts) == 4 and parts[3] == "open" and method == "GET":
+            return self.stream_html_notebook(notebook_id, start_response)
+        if len(parts) == 4 and parts[3] == "notes" and method == "GET":
+            return _json_response(start_response, 200, self.get_html_notebook_notes(notebook_id))
+        if len(parts) == 4 and parts[3] == "notes" and method == "PUT":
+            payload = self._parse_json(environ)
+            return _json_response(start_response, 200, self.save_html_notebook_notes(notebook_id, payload))
+
+        raise HTTPError(404, "Not found")
 
     def _notebook_attachment_dir(self):
         return Path(self.config_dir) / "notebook_attachments"

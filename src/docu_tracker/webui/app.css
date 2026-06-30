@@ -135,6 +135,49 @@ textarea {
   margin-top: 20px;
 }
 
+.hero-views {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.hero-views-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 4px;
+  border: 1px solid rgba(50, 71, 67, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 251, 244, 0.62);
+}
+
+.hero-views-buttons .button {
+  min-height: 40px;
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--muted);
+  font-weight: 700;
+  box-shadow: none;
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
+}
+
+.hero-views-buttons .button:hover,
+.hero-views-buttons .button:focus-visible {
+  background: var(--accent-soft);
+  border-color: rgba(11, 110, 98, 0.24);
+  color: var(--accent-strong);
+}
+
+.hero-views-buttons .button.active {
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+  border-color: transparent;
+  color: #f7fbf9;
+  box-shadow: 0 8px 18px rgba(8, 77, 70, 0.22);
+}
+
 .hero-visual-toolbar {
   display: flex;
   justify-content: space-between;
@@ -643,6 +686,18 @@ textarea:focus {
   flex-wrap: wrap;
 }
 
+/* Contextual "back to library" — only shown while inside a non-list view, where
+   the hero switcher may be scrolled out of sight. */
+.library-back-btn {
+  display: none;
+}
+
+.table-panel.graph-mode-active .library-back-btn,
+.table-panel.notebook-mode-active .library-back-btn,
+.table-panel.html-notebooks-mode-active .library-back-btn {
+  display: inline-flex;
+}
+
 .library-maintenance-actions {
   justify-content: flex-start;
 }
@@ -1143,9 +1198,7 @@ tbody tr.selected {
 
 #clear-duplicates-all,
 #hard-delete-duplicates-all,
-#prune-missing-files,
-#view-toggle-btn,
-#notebook-toggle-btn {
+#prune-missing-files {
   font-size: 0.85rem;
   padding: 6px 14px;
   border-radius: 12px;
@@ -1158,9 +1211,7 @@ tbody tr.selected {
 
 #clear-duplicates-all:hover,
 #hard-delete-duplicates-all:hover,
-#prune-missing-files:hover,
-#view-toggle-btn:hover,
-#notebook-toggle-btn:hover {
+#prune-missing-files:hover {
   background: var(--accent-soft);
   border-color: var(--accent);
   color: var(--accent-strong);
@@ -1168,9 +1219,7 @@ tbody tr.selected {
 
 #clear-duplicates-all:active,
 #hard-delete-duplicates-all:active,
-#prune-missing-files:active,
-#view-toggle-btn.active,
-#notebook-toggle-btn.active {
+#prune-missing-files:active {
   background: var(--accent);
   color: white;
   border-color: var(--accent-strong);
@@ -1242,7 +1291,6 @@ body.notebook-app-mode .table-panel > .section-heading {
 
 body.notebook-app-mode .library-maintenance-actions,
 body.notebook-app-mode #doc-count,
-body.notebook-app-mode #view-toggle-btn,
 body.notebook-app-mode .freeze-physics-label {
   display: none !important;
 }
@@ -1264,6 +1312,171 @@ body.notebook-app-mode .library-actions {
 
 .table-panel.notebook-mode-active .notebook-container {
   display: block;
+}
+
+
+/* ==========================================================================
+   HTML Notebooks View
+   ========================================================================== */
+
+.table-panel .html-notebook-container {
+  display: none;
+  min-height: 620px;
+  margin-top: 16px;
+}
+
+.table-panel.html-notebooks-mode-active .table-wrap,
+.table-panel.html-notebooks-mode-active .graph-container,
+.table-panel.html-notebooks-mode-active .notebook-container {
+  display: none;
+}
+
+.table-panel.html-notebooks-mode-active .html-notebook-container {
+  display: block;
+}
+
+body.html-notebook-app-mode .hero,
+body.html-notebook-app-mode .toolbar-layout,
+body.html-notebook-app-mode .sidebar {
+  display: none;
+}
+
+body.html-notebook-app-mode .app-shell {
+  margin-top: 12px;
+}
+
+body.html-notebook-app-mode .layout {
+  grid-template-columns: 1fr;
+  margin-top: 0;
+}
+
+body.html-notebook-app-mode .table-panel {
+  min-height: calc(100vh - 24px);
+}
+
+body.html-notebook-app-mode .table-panel > .section-heading {
+  margin-bottom: 8px;
+}
+
+body.html-notebook-app-mode .library-maintenance-actions,
+body.html-notebook-app-mode #doc-count,
+body.html-notebook-app-mode .freeze-physics-label {
+  display: none !important;
+}
+
+body.html-notebook-app-mode .library-actions {
+  justify-content: flex-end;
+}
+
+.html-notebook-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+}
+
+.html-notebook-add h3 {
+  margin: 2px 0 0;
+}
+
+.html-notebook-add-form {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.html-notebook-input {
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper);
+  color: var(--text);
+  font-size: 0.88rem;
+  font-family: inherit;
+}
+
+.html-notebook-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.html-notebook-add-form .html-notebook-input {
+  flex: 1 1 220px;
+}
+
+.html-notebook-readonly-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+  color: var(--muted);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.html-notebook-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  vertical-align: middle;
+}
+
+.html-notebook-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.html-notebook-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--paper);
+}
+
+.html-notebook-card-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.html-notebook-card-info strong {
+  font-size: 0.98rem;
+  color: var(--text);
+}
+
+.html-notebook-card-info .muted {
+  color: var(--muted);
+  font-size: 0.78rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.html-notebook-card-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.html-notebook-hint {
+  margin: 4px 0 0;
+  font-size: 0.82rem;
 }
 
 .notebook-layout {
@@ -1555,8 +1768,8 @@ body.is-resizing-notebook {
 }
 
 .notebook-markdown-preview {
-  min-height: 360px;
-  max-height: 520px;
+  min-height: 60vh;
+  max-height: 82vh;
   overflow: auto;
   border: 1px solid rgba(50, 71, 67, 0.1);
   border-radius: 16px;
@@ -1806,8 +2019,8 @@ body.is-resizing-notebook {
 }
 
 .notebook-body-input {
-  min-height: 360px;
-  max-height: 520px;
+  min-height: 60vh;
+  max-height: 82vh;
   resize: none;
   overflow: auto;
   line-height: 1.55;

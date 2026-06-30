@@ -715,6 +715,45 @@ def test_notebook_topics_round_trip(tmp_path, monkeypatch):
     assert bad_item["status"].startswith("400")
 
 
+def test_html_notebook_add_list_delete(tmp_path, monkeypatch):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    app = DocuTrackerWebApp(config_dir=str(config_dir), cwd=str(tmp_path))
+
+    source = tmp_path / "map.html"
+    source.write_text("<html><body>Hello map</body></html>")
+
+    captured = {}
+    def start_response(status, headers):
+        captured["status"] = status
+
+    # add
+    body = app(
+        build_test_environ("POST", "/api/html-notebooks",
+                           payload={"path": str(source), "title": "Map"}),
+        start_response,
+    )
+    created = json.loads(b"".join(body))["notebook"]
+    assert captured["status"].startswith("201")
+    assert created["title"] == "Map"
+    assert created["source_path"] == str(source)
+
+    stored_dir = config_dir / "notebooks"
+    assert len(list(stored_dir.iterdir())) == 1
+
+    # appears in state
+    state = json.loads(
+        b"".join(app(build_test_environ("GET", "/api/state"), start_response))
+    )
+    assert [n["title"] for n in state["html_notebooks"]] == ["Map"]
+
+    # delete removes the managed copy
+    app(build_test_environ("DELETE", f"/api/html-notebooks/{created['id']}"), start_response)
+    assert captured["status"].startswith("200")
+    assert list(stored_dir.iterdir()) == []
+
+
 def test_web_command_invokes_server(tmp_path, monkeypatch):
     config_dir = tmp_path / "config"
     config_dir.mkdir()
@@ -726,3 +765,219 @@ def test_web_command_invokes_server(tmp_path, monkeypatch):
 
     assert result.exit_code == 0
     mock_server.assert_called_once()
+
+
+def _add_html_notebook(app, source, title="NB"):
+    captured = {}
+
+    def start_response(status, headers):
+        captured["status"] = status
+
+    body = app(
+        build_test_environ(
+            "POST",
+            "/api/html-notebooks",
+            payload={"path": str(source), "title": title},
+        ),
+        start_response,
+    )
+    return json.loads(b"".join(body))["notebook"]
+
+
+def test_html_notebook_content_open_and_isolation(tmp_path, monkeypatch):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    app = DocuTrackerWebApp(config_dir=str(config_dir), cwd=str(tmp_path))
+
+    source = tmp_path / "map.html"
+    source.write_text("<html><head></head><body>original</body></html>")
+    nb = _add_html_notebook(app, source)
+
+    def start_response(status, headers):
+        start_response.status = status
+        start_response.headers = dict(headers)
+
+    # notes start empty
+    notes = json.loads(
+        b"".join(
+            app(
+                build_test_environ("GET", f"/api/html-notebooks/{nb['id']}/notes"),
+                start_response,
+            )
+        )
+    )
+    assert notes == {}
+
+    # save the notebook's internal notes workspace
+    app(
+        build_test_environ(
+            "PUT",
+            f"/api/html-notebooks/{nb['id']}/notes",
+            payload={"epistemic-failure-map-notebook-v1": "{\"notes\":[1]}"},
+        ),
+        start_response,
+    )
+    assert start_response.status.startswith("200")
+
+    # GET notes returns the saved state
+    notes = json.loads(
+        b"".join(
+            app(
+                build_test_environ("GET", f"/api/html-notebooks/{nb['id']}/notes"),
+                start_response,
+            )
+        )
+    )
+    assert notes == {"epistemic-failure-map-notebook-v1": "{\"notes\":[1]}"}
+
+    # /open serves text/html and injects the notes bridge seeded with the state
+    open_body = b"".join(
+        app(
+            build_test_environ("GET", f"/api/html-notebooks/{nb['id']}/open"),
+            start_response,
+        )
+    ).decode("utf-8")
+    assert start_response.headers["Content-Type"] == "text/html; charset=utf-8"
+    assert "localStorage" in open_body  # bridge injected
+    assert "epistemic-failure-map-notebook-v1" in open_body  # seeded
+    assert "original" in open_body  # original document content preserved
+
+    # the ORIGINAL source file is untouched
+    assert source.read_text() == "<html><head></head><body>original</body></html>"
+
+
+def test_html_notebook_validation_and_404(tmp_path, monkeypatch):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    app = DocuTrackerWebApp(config_dir=str(config_dir), cwd=str(tmp_path))
+
+    def start_response(status, headers):
+        start_response.status = status
+
+    # missing path
+    app(
+        build_test_environ("POST", "/api/html-notebooks", payload={"title": "x"}),
+        start_response,
+    )
+    assert start_response.status.startswith("400")
+
+    # non-existent path
+    app(
+        build_test_environ(
+            "POST",
+            "/api/html-notebooks",
+            payload={"path": str(tmp_path / "nope.html")},
+        ),
+        start_response,
+    )
+    assert start_response.status.startswith("400")
+
+    # non-html file
+    bad = tmp_path / "note.txt"
+    bad.write_text("hi")
+    app(
+        build_test_environ("POST", "/api/html-notebooks", payload={"path": str(bad)}),
+        start_response,
+    )
+    assert start_response.status.startswith("400")
+
+    # unknown id
+    app(
+        build_test_environ("GET", "/api/html-notebooks/999/notes"),
+        start_response,
+    )
+    assert start_response.status.startswith("404")
+    app(
+        build_test_environ("GET", "/api/html-notebooks/999/open"),
+        start_response,
+    )
+    assert start_response.status.startswith("404")
+    app(
+        build_test_environ("DELETE", "/api/html-notebooks/999"),
+        start_response,
+    )
+    assert start_response.status.startswith("404")
+
+
+def test_html_notebook_read_only(tmp_path, monkeypatch):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    app = DocuTrackerWebApp(config_dir=str(config_dir), cwd=str(tmp_path))
+
+    source = tmp_path / "reader.html"
+    source.write_text("<html><body>read me</body></html>")
+
+    captured = {}
+
+    def start_response(status, headers):
+        captured["status"] = status
+
+    # add as read-only
+    body = app(
+        build_test_environ(
+            "POST",
+            "/api/html-notebooks",
+            payload={"path": str(source), "title": "Reader", "read_only": True},
+        ),
+        start_response,
+    )
+    created = json.loads(b"".join(body))["notebook"]
+    assert created["read_only"] is True
+
+    # state reflects the flag
+    state = json.loads(
+        b"".join(app(build_test_environ("GET", "/api/state"), start_response))
+    )
+    assert state["html_notebooks"][0]["read_only"] is True
+
+    # saving notes to a read-only notebook is rejected (frozen)
+    app(
+        build_test_environ(
+            "PUT",
+            f"/api/html-notebooks/{created['id']}/notes",
+            payload={"k": "v"},
+        ),
+        start_response,
+    )
+    assert captured["status"].startswith("400")
+    # its notes stay empty after the rejected save
+    notes = json.loads(
+        b"".join(
+            app(
+                build_test_environ("GET", f"/api/html-notebooks/{created['id']}/notes"),
+                start_response,
+            )
+        )
+    )
+    assert notes == {}
+    # but a read-only notebook still opens with its (frozen) notes bridge
+    open_body = b"".join(
+        app(
+            build_test_environ("GET", f"/api/html-notebooks/{created['id']}/open"),
+            start_response,
+        )
+    ).decode("utf-8")
+    assert "read me" in open_body
+
+    # a default (editable) notebook accepts notes saves
+    editable_src = tmp_path / "editable.html"
+    editable_src.write_text("<html><body>edit me</body></html>")
+    body = app(
+        build_test_environ(
+            "POST",
+            "/api/html-notebooks",
+            payload={"path": str(editable_src), "title": "Editable"},
+        ),
+        start_response,
+    )
+    editable = json.loads(b"".join(body))["notebook"]
+    assert editable["read_only"] is False
+    app(
+        build_test_environ(
+            "PUT",
+            f"/api/html-notebooks/{editable['id']}/notes",
+            payload={"k": "v"},
+        ),
+        start_response,
+    )
+    assert captured["status"].startswith("200")

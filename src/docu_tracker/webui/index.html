@@ -41,6 +41,15 @@
               <strong id="stat-waiting-scan">0</strong>
             </div>
           </div>
+          <div class="hero-views">
+            <span class="stat-label">View</span>
+            <div class="hero-views-buttons">
+              <button id="library-toggle-btn" class="button" type="button">Library</button>
+              <button id="view-toggle-btn" class="button" type="button">Graph</button>
+              <button id="notebook-toggle-btn" class="button" type="button">Notebook</button>
+              <button id="html-notebooks-toggle-btn" class="button" type="button">HTML Notebooks</button>
+            </div>
+          </div>
         </div>
         <div class="hero-visual-toolbar">
           <div>
@@ -135,6 +144,7 @@
               <h2>Document Queue</h2>
             </div>
             <div class="section-heading-actions library-actions">
+              <button id="library-back-btn" class="button button-primary library-back-btn" type="button">← Library</button>
               <div class="library-maintenance-actions">
                 <button id="clear-duplicates-all" class="button" type="button">Clear Duplicates</button>
                 <button id="hard-delete-duplicates-all" class="button button-danger" type="button">Delete Duplicates</button>
@@ -146,8 +156,6 @@
                   <input id="freeze-physics-checkbox" type="checkbox">
                   <span>Freeze Physics</span>
                 </label>
-                <button id="view-toggle-btn" class="button" type="button">Graph View</button>
-                <button id="notebook-toggle-btn" class="button" type="button">Notebook</button>
               </div>
             </div>
           </div>
@@ -169,6 +177,7 @@
           </div>
           <div id="graph-container" class="graph-container"></div>
           <div id="notebook-container" class="notebook-container"></div>
+          <div id="html-notebook-container" class="html-notebook-container"></div>
         </section>
 
         <aside class="sidebar">
