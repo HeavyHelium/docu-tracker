@@ -1,7 +1,29 @@
 # HTML Notebooks — Design
 
 **Date:** 2026-06-30
-**Status:** Approved
+**Status:** Superseded in part — see "Revision: notes-sync model" below
+
+> **Revision (2026-06-30): editing model changed.** The original design below let
+> the user edit the notebook's **raw HTML source** in-app. In practice these
+> documents (e.g. the epistemic-failure literature map) carry their **own internal
+> notes/annotation workspace** that persists to browser `localStorage` — so editing
+> raw HTML was the wrong lever. The shipped feature instead **manages that internal
+> notes workspace**:
+>
+> - On `GET /open`, the server injects a small **bridge** at the top of the page
+>   that shadows `localStorage`, **seeded inline** with this notebook's saved notes
+>   (race-free), and mirrors writes back via **`PUT /api/html-notebooks/{id}/notes`**
+>   (debounced). `GET /api/html-notebooks/{id}/notes` returns the saved state.
+> - Notes are stored per-notebook in a `notes_state` JSON column, so documents
+>   served from the same origin never clobber each other's `localStorage`.
+> - **Read-only** now means *frozen notes*: saved notes load, but the bridge and the
+>   server both refuse to write changes back.
+> - The raw-HTML source editor and the `/{id}/content` read/write endpoints were
+>   **removed**. The managed-copy storage, add-by-path, Open, Remove, and the
+>   read-only flag are unchanged.
+>
+> Everything below describes the original (pre-revision) plan and is kept for
+> history.
 
 ## Goal
 
