@@ -148,6 +148,18 @@ textarea {
   gap: 8px;
 }
 
+/* The view switcher reads as a colored tab group: tinted by default, solid
+   accent when active (see the #*-toggle-btn.active rule). */
+.hero-views-buttons .button {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.hero-views-buttons .button:hover {
+  background: rgba(11, 110, 98, 0.22);
+}
+
 .hero-visual-toolbar {
   display: flex;
   justify-content: space-between;
@@ -1182,8 +1194,10 @@ tbody tr.selected {
 #clear-duplicates-all:active,
 #hard-delete-duplicates-all:active,
 #prune-missing-files:active,
+#library-toggle-btn.active,
 #view-toggle-btn.active,
-#notebook-toggle-btn.active {
+#notebook-toggle-btn.active,
+#html-notebooks-toggle-btn.active {
   background: var(--accent);
   color: white;
   border-color: var(--accent-strong);
@@ -1255,7 +1269,6 @@ body.notebook-app-mode .table-panel > .section-heading {
 
 body.notebook-app-mode .library-maintenance-actions,
 body.notebook-app-mode #doc-count,
-body.notebook-app-mode #view-toggle-btn,
 body.notebook-app-mode .freeze-physics-label {
   display: none !important;
 }
@@ -1325,8 +1338,6 @@ body.html-notebook-app-mode .table-panel > .section-heading {
 
 body.html-notebook-app-mode .library-maintenance-actions,
 body.html-notebook-app-mode #doc-count,
-body.html-notebook-app-mode #view-toggle-btn,
-body.html-notebook-app-mode #notebook-toggle-btn,
 body.html-notebook-app-mode .freeze-physics-label {
   display: none !important;
 }

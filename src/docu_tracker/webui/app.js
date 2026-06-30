@@ -97,6 +97,7 @@ const els = {
   activityLog: document.getElementById("activity-log"),
   flash: document.getElementById("flash"),
   viewToggleBtn: document.getElementById("view-toggle-btn"),
+  libraryToggleBtn: document.getElementById("library-toggle-btn"),
   notebookToggleBtn: document.getElementById("notebook-toggle-btn"),
   graphContainer: document.getElementById("graph-container"),
   notebookContainer: document.getElementById("notebook-container"),
@@ -2643,11 +2644,9 @@ function setLibraryViewMode(mode) {
   els.tablePanel.classList.toggle("html-notebooks-mode-active", mode === "html-notebooks");
   document.body.classList.toggle("notebook-app-mode", mode === "notebook");
   document.body.classList.toggle("html-notebook-app-mode", mode === "html-notebooks");
-  els.viewToggleBtn.textContent = mode === "graph" ? "List View" : "Graph View";
+  els.libraryToggleBtn.classList.toggle("active", mode === "list");
   els.viewToggleBtn.classList.toggle("active", mode === "graph");
-  els.notebookToggleBtn.textContent = mode === "notebook" ? "Library View" : "Notebook";
   els.notebookToggleBtn.classList.toggle("active", mode === "notebook");
-  els.htmlNotebooksToggleBtn.textContent = mode === "html-notebooks" ? "Library View" : "HTML Notebooks";
   els.htmlNotebooksToggleBtn.classList.toggle("active", mode === "html-notebooks");
 
   if (mode !== "graph" && state.networkInstance) {
@@ -2669,33 +2668,32 @@ function setLibraryViewMode(mode) {
 
 window.addEventListener("pagehide", closeBrowserSession);
 
-// Library view actions
-els.viewToggleBtn.addEventListener("click", async () => {
+// Library view actions — the hero "View" group acts like tabs: each button
+// selects its view, and "Library" always returns to the document table.
+async function switchLibraryView(mode) {
+  if (state.viewMode === mode) return;
+  // Flush the open research note before leaving the notebook view.
   if (state.viewMode === "notebook") {
     await saveNotebookNote({ renderAfterSave: false }).catch((error) => showFlash(error.message, "error"));
   }
-  setLibraryViewMode(state.viewMode === "graph" ? "list" : "graph");
+  setLibraryViewMode(mode);
+}
+
+els.libraryToggleBtn.addEventListener("click", () => {
+  switchLibraryView("list").catch((error) => showFlash(error.message, "error"));
+});
+els.viewToggleBtn.addEventListener("click", () => {
+  switchLibraryView("graph").catch((error) => showFlash(error.message, "error"));
+});
+els.notebookToggleBtn.addEventListener("click", () => {
+  switchLibraryView("notebook").catch((error) => showFlash(error.message, "error"));
+});
+els.htmlNotebooksToggleBtn.addEventListener("click", () => {
+  switchLibraryView("html-notebooks").catch((error) => showFlash(error.message, "error"));
 });
 
-els.notebookToggleBtn.addEventListener("click", async () => {
-  if (state.viewMode === "notebook") {
-    await saveNotebookNote({ renderAfterSave: false }).catch((error) => showFlash(error.message, "error"));
-    setLibraryViewMode("list");
-    return;
-  }
-  setLibraryViewMode("notebook");
-});
-
-els.htmlNotebooksToggleBtn.addEventListener("click", async () => {
-  if (state.viewMode === "html-notebooks") {
-    setLibraryViewMode("list");
-    return;
-  }
-  if (state.viewMode === "notebook") {
-    await saveNotebookNote({ renderAfterSave: false }).catch((error) => showFlash(error.message, "error"));
-  }
-  setLibraryViewMode("html-notebooks");
-});
+// Reflect the initial (list) view in the switcher's active state.
+setLibraryViewMode("list");
 
 // Freeze physics checkbox listener
 els.freezePhysicsCheckbox.addEventListener("change", (e) => {
