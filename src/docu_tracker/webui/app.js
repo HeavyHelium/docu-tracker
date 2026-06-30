@@ -98,6 +98,7 @@ const els = {
   flash: document.getElementById("flash"),
   viewToggleBtn: document.getElementById("view-toggle-btn"),
   libraryToggleBtn: document.getElementById("library-toggle-btn"),
+  libraryBackBtn: document.getElementById("library-back-btn"),
   notebookToggleBtn: document.getElementById("notebook-toggle-btn"),
   graphContainer: document.getElementById("graph-container"),
   notebookContainer: document.getElementById("notebook-container"),
@@ -2680,6 +2681,9 @@ async function switchLibraryView(mode) {
 }
 
 els.libraryToggleBtn.addEventListener("click", () => {
+  switchLibraryView("list").catch((error) => showFlash(error.message, "error"));
+});
+els.libraryBackBtn.addEventListener("click", () => {
   switchLibraryView("list").catch((error) => showFlash(error.message, "error"));
 });
 els.viewToggleBtn.addEventListener("click", () => {

@@ -668,6 +668,18 @@ textarea:focus {
   flex-wrap: wrap;
 }
 
+/* Contextual "back to library" — only shown while inside a non-list view, where
+   the hero switcher may be scrolled out of sight. */
+.library-back-btn {
+  display: none;
+}
+
+.table-panel.graph-mode-active .library-back-btn,
+.table-panel.notebook-mode-active .library-back-btn,
+.table-panel.html-notebooks-mode-active .library-back-btn {
+  display: inline-flex;
+}
+
 .library-maintenance-actions {
   justify-content: flex-start;
 }
