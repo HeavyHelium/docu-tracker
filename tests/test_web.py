@@ -765,3 +765,113 @@ def test_web_command_invokes_server(tmp_path, monkeypatch):
 
     assert result.exit_code == 0
     mock_server.assert_called_once()
+
+
+def _add_html_notebook(app, source, title="NB"):
+    captured = {}
+
+    def start_response(status, headers):
+        captured["status"] = status
+
+    body = app(
+        build_test_environ(
+            "POST",
+            "/api/html-notebooks",
+            payload={"path": str(source), "title": title},
+        ),
+        start_response,
+    )
+    return json.loads(b"".join(body))["notebook"]
+
+
+def test_html_notebook_content_open_and_isolation(tmp_path, monkeypatch):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    app = DocuTrackerWebApp(config_dir=str(config_dir), cwd=str(tmp_path))
+
+    source = tmp_path / "map.html"
+    source.write_text("<html><body>original</body></html>")
+    nb = _add_html_notebook(app, source)
+
+    def start_response(status, headers):
+        start_response.status = status
+        start_response.headers = dict(headers)
+
+    # edit content
+    app(
+        build_test_environ(
+            "PATCH",
+            f"/api/html-notebooks/{nb['id']}",
+            payload={"content": "<html><body>edited</body></html>"},
+        ),
+        start_response,
+    )
+
+    # GET content returns the edit
+    content = b"".join(
+        app(
+            build_test_environ("GET", f"/api/html-notebooks/{nb['id']}/content"),
+            start_response,
+        )
+    ).decode("utf-8")
+    assert "edited" in content
+
+    # /open serves text/html
+    b"".join(
+        app(
+            build_test_environ("GET", f"/api/html-notebooks/{nb['id']}/open"),
+            start_response,
+        )
+    )
+    assert start_response.headers["Content-Type"] == "text/html; charset=utf-8"
+
+    # the ORIGINAL source file is untouched
+    assert source.read_text() == "<html><body>original</body></html>"
+
+
+def test_html_notebook_validation_and_404(tmp_path, monkeypatch):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    app = DocuTrackerWebApp(config_dir=str(config_dir), cwd=str(tmp_path))
+
+    def start_response(status, headers):
+        start_response.status = status
+
+    # missing path
+    app(
+        build_test_environ("POST", "/api/html-notebooks", payload={"title": "x"}),
+        start_response,
+    )
+    assert start_response.status.startswith("400")
+
+    # non-existent path
+    app(
+        build_test_environ(
+            "POST",
+            "/api/html-notebooks",
+            payload={"path": str(tmp_path / "nope.html")},
+        ),
+        start_response,
+    )
+    assert start_response.status.startswith("400")
+
+    # non-html file
+    bad = tmp_path / "note.txt"
+    bad.write_text("hi")
+    app(
+        build_test_environ("POST", "/api/html-notebooks", payload={"path": str(bad)}),
+        start_response,
+    )
+    assert start_response.status.startswith("400")
+
+    # unknown id
+    app(
+        build_test_environ("GET", "/api/html-notebooks/999/content"),
+        start_response,
+    )
+    assert start_response.status.startswith("404")
+    app(
+        build_test_environ("DELETE", "/api/html-notebooks/999"),
+        start_response,
+    )
+    assert start_response.status.startswith("404")
