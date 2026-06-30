@@ -145,19 +145,37 @@ textarea {
 .hero-views-buttons {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 4px;
+  border: 1px solid rgba(50, 71, 67, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 251, 244, 0.62);
 }
 
-/* The view switcher reads as a colored tab group: tinted by default, solid
-   accent when active (see the #*-toggle-btn.active rule). */
 .hero-views-buttons .button {
-  background: var(--accent-soft);
-  color: var(--accent-strong);
-  font-weight: 600;
+  min-height: 40px;
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--muted);
+  font-weight: 700;
+  box-shadow: none;
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
 }
 
-.hero-views-buttons .button:hover {
-  background: rgba(11, 110, 98, 0.22);
+.hero-views-buttons .button:hover,
+.hero-views-buttons .button:focus-visible {
+  background: var(--accent-soft);
+  border-color: rgba(11, 110, 98, 0.24);
+  color: var(--accent-strong);
+}
+
+.hero-views-buttons .button.active {
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+  border-color: transparent;
+  color: #f7fbf9;
+  box-shadow: 0 8px 18px rgba(8, 77, 70, 0.22);
 }
 
 .hero-visual-toolbar {
@@ -1180,9 +1198,7 @@ tbody tr.selected {
 
 #clear-duplicates-all,
 #hard-delete-duplicates-all,
-#prune-missing-files,
-#view-toggle-btn,
-#notebook-toggle-btn {
+#prune-missing-files {
   font-size: 0.85rem;
   padding: 6px 14px;
   border-radius: 12px;
@@ -1195,9 +1211,7 @@ tbody tr.selected {
 
 #clear-duplicates-all:hover,
 #hard-delete-duplicates-all:hover,
-#prune-missing-files:hover,
-#view-toggle-btn:hover,
-#notebook-toggle-btn:hover {
+#prune-missing-files:hover {
   background: var(--accent-soft);
   border-color: var(--accent);
   color: var(--accent-strong);
@@ -1205,11 +1219,7 @@ tbody tr.selected {
 
 #clear-duplicates-all:active,
 #hard-delete-duplicates-all:active,
-#prune-missing-files:active,
-#library-toggle-btn.active,
-#view-toggle-btn.active,
-#notebook-toggle-btn.active,
-#html-notebooks-toggle-btn.active {
+#prune-missing-files:active {
   background: var(--accent);
   color: white;
   border-color: var(--accent-strong);
@@ -1758,8 +1768,8 @@ body.is-resizing-notebook {
 }
 
 .notebook-markdown-preview {
-  min-height: 360px;
-  max-height: 520px;
+  min-height: 60vh;
+  max-height: 82vh;
   overflow: auto;
   border: 1px solid rgba(50, 71, 67, 0.1);
   border-radius: 16px;
@@ -2009,8 +2019,8 @@ body.is-resizing-notebook {
 }
 
 .notebook-body-input {
-  min-height: 360px;
-  max-height: 520px;
+  min-height: 60vh;
+  max-height: 82vh;
   resize: none;
   overflow: auto;
   line-height: 1.55;

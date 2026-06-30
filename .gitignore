@@ -6,3 +6,7 @@ build/
 .env
 *.db
 .venv/
+
+# Local editor/agent state and generated notebook exports
+.antigravitycli/
+epistemic_failure_deception_literature_map_v36.html
