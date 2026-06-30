@@ -496,7 +496,7 @@ class Database:
 
     def list_html_notebooks(self):
         rows = self.conn.execute(
-            "SELECT id FROM html_notebooks ORDER BY updated_at ASC, id ASC"
+            "SELECT id FROM html_notebooks ORDER BY updated_at DESC, id DESC"
         ).fetchall()
         return [self.get_html_notebook(row[0]) for row in rows]
 

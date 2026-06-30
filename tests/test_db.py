@@ -452,7 +452,9 @@ def test_html_notebook_crud(tmp_path):
     assert db.get_html_notebook(nb_id)["updated_at"] >= before
 
     db.add_html_notebook("Second", "/src/b.html", "stored-2.html")
-    assert [n["title"] for n in db.list_html_notebooks()][:1] == ["Renamed"]
+    # list_html_notebooks orders most-recently-touched first (matching notebook_notes):
+    # "Second" was just inserted, so it sorts ahead of the earlier-updated "Renamed".
+    assert [n["title"] for n in db.list_html_notebooks()] == ["Second", "Renamed"]
 
     db.delete_html_notebook(nb_id)
     assert db.get_html_notebook(nb_id) is None
