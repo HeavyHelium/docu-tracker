@@ -1,6 +1,8 @@
 const state = {
   documents: [],
   notebookNotes: [],
+  htmlNotebooks: [],
+  editingHtmlNotebookId: null,
   selectedNoteId: null,
   notebookReferenceSearch: "",
   topics: [],
@@ -31,6 +33,9 @@ let detailAutosaveRequestId = 0;
 let saveButtonResetTimer = null;
 let notebookAutosaveTimer = null;
 let notebookSaveStatusResetTimer = null;
+let htmlNotebookAutosaveTimer = null;
+let htmlNotebookSaveStatusResetTimer = null;
+const HTML_NOTEBOOK_LARGE_THRESHOLD = 1000000;
 
 const STATUS_VISUALS = {
   unread: { label: "Unread", color: "#e6b146" },
@@ -99,6 +104,8 @@ const els = {
   notebookToggleBtn: document.getElementById("notebook-toggle-btn"),
   graphContainer: document.getElementById("graph-container"),
   notebookContainer: document.getElementById("notebook-container"),
+  htmlNotebooksToggleBtn: document.getElementById("html-notebooks-toggle-btn"),
+  htmlNotebookContainer: document.getElementById("html-notebook-container"),
   tablePanel: document.querySelector(".table-panel"),
   freezePhysicsCheckbox: document.getElementById("freeze-physics-checkbox"),
 };
@@ -136,6 +143,7 @@ async function loadState(keepSelection = true) {
   state.statuses = payload.statuses;
   state.scanPaths = payload.scan_paths;
   state.notebookNotes = payload.notebook_notes || [];
+  state.htmlNotebooks = payload.html_notebooks || [];
   state.waitingToScan = null;
   state.oldestWaitingModifiedAt = null;
   state.waitingToScanLoading = true;
@@ -149,6 +157,7 @@ async function loadState(keepSelection = true) {
   renderStats();
   renderDocuments();
   renderNotebook();
+  renderHtmlNotebooks();
   renderDetail();
   renderTopics();
   loadWaitingToScan();
@@ -1707,6 +1716,284 @@ async function deleteNotebookNote() {
   showFlash("Notebook note deleted.");
 }
 
+/* ==========================================================================
+   HTML Notebooks View
+   ========================================================================== */
+
+function htmlNotebookById(id) {
+  return state.htmlNotebooks.find((nb) => nb.id === id) || null;
+}
+
+function formatHtmlNotebookSize(length) {
+  if (length < 1024) return `${length} chars`;
+  if (length < 1024 * 1024) return `${(length / 1024).toFixed(1)} KB`;
+  return `${(length / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function renderHtmlNotebooks() {
+  if (state.editingHtmlNotebookId != null && !htmlNotebookById(state.editingHtmlNotebookId)) {
+    state.editingHtmlNotebookId = null;
+  }
+  const editing = state.editingHtmlNotebookId != null
+    ? htmlNotebookById(state.editingHtmlNotebookId)
+    : null;
+
+  els.htmlNotebookContainer.innerHTML = `
+    <div class="html-notebook-layout">
+      <section class="html-notebook-list-panel">
+        <div class="html-notebook-add">
+          <p class="section-kicker">HTML Notebooks</p>
+          <h3>Imported Notebooks</h3>
+          <div class="html-notebook-add-form">
+            <input id="html-notebook-add-title" class="html-notebook-input" type="text" placeholder="Title (optional)">
+            <input id="html-notebook-add-path" class="html-notebook-input" type="text" placeholder="/path/to/notebook.html">
+            <button id="html-notebook-add-btn" class="button button-primary" type="button">Add</button>
+          </div>
+        </div>
+        <div class="html-notebook-list">
+          ${state.htmlNotebooks.length ? state.htmlNotebooks.map((nb) => `
+            <div class="html-notebook-card ${nb.id === state.editingHtmlNotebookId ? "selected" : ""}">
+              <div class="html-notebook-card-info">
+                <strong>${escapeHtml(nb.title || "Untitled notebook")}</strong>
+                <small class="muted">imported from ${escapeHtml(nb.source_path)}</small>
+                <small class="muted">Updated ${escapeHtml(formatDateTime(nb.updated_at))}</small>
+              </div>
+              <div class="html-notebook-card-actions">
+                <button type="button" class="button" data-html-open="${nb.id}">Open</button>
+                <button type="button" class="button" data-html-edit="${nb.id}">Edit</button>
+                <button type="button" class="button button-danger" data-html-remove="${nb.id}">Remove</button>
+              </div>
+            </div>
+          `).join("") : `<div class="empty-state">Add an .html or .htm file to import it as a managed notebook.</div>`}
+        </div>
+      </section>
+      ${editing ? renderHtmlNotebookEditor(editing) : ""}
+    </div>
+  `;
+  if (editing) {
+    setupHtmlNotebookEditor(editing);
+  }
+}
+
+function renderHtmlNotebookEditor(nb) {
+  return `
+    <section class="html-notebook-editor-panel" data-editing-id="${nb.id}">
+      <div class="html-notebook-editor-header">
+        <div class="html-notebook-editor-meta">
+          <p class="section-kicker notebook-entry-kicker">
+            <span>Editing</span>
+            <span id="html-notebook-save-status" class="notebook-save-status saved">Saved</span>
+          </p>
+          <input id="html-notebook-title" class="notebook-title-input" type="text" value="${escapeAttribute(nb.title || "")}" placeholder="Notebook title">
+          <p id="html-notebook-info" class="html-notebook-info muted"></p>
+        </div>
+        <div class="html-notebook-editor-actions">
+          <div class="html-notebook-find">
+            <input id="html-notebook-find" class="html-notebook-input" type="text" placeholder="Find...">
+            <button id="html-notebook-find-prev" class="button" type="button">Prev</button>
+            <button id="html-notebook-find-next" class="button" type="button">Next</button>
+          </div>
+          <button id="html-notebook-save" class="button button-primary" type="button">Save</button>
+          <button id="html-notebook-refresh" class="button" type="button">Refresh preview</button>
+          <button id="html-notebook-close" class="button" type="button">Close</button>
+        </div>
+      </div>
+      <div class="html-notebook-compose">
+        <div class="html-notebook-source-wrap">
+          <div id="html-notebook-gutter" class="html-notebook-gutter" aria-hidden="true"></div>
+          <textarea id="html-notebook-source" class="html-notebook-source" spellcheck="false" placeholder="Loading..."></textarea>
+        </div>
+        <section class="html-notebook-preview-panel">
+          <p class="section-kicker">Preview</p>
+          <iframe id="html-notebook-preview" class="html-notebook-preview" title="Notebook preview"></iframe>
+        </section>
+      </div>
+    </section>
+  `;
+}
+
+async function setupHtmlNotebookEditor(nb) {
+  const textarea = els.htmlNotebookContainer.querySelector("#html-notebook-source");
+  const preview = els.htmlNotebookContainer.querySelector("#html-notebook-preview");
+  const info = els.htmlNotebookContainer.querySelector("#html-notebook-info");
+  if (preview) preview.src = `/api/html-notebooks/${nb.id}/open`;
+  if (!textarea) return;
+  try {
+    const response = await fetch(`/api/html-notebooks/${nb.id}/content`);
+    if (!response.ok) throw new Error(`Request failed: ${response.status}`);
+    const content = await response.text();
+    // The editor may have been closed or switched while content loaded.
+    if (state.editingHtmlNotebookId !== nb.id) return;
+    textarea.value = content;
+    textarea.placeholder = "";
+    renderHtmlNotebookGutter();
+    if (info) {
+      const sizeText = formatHtmlNotebookSize(content.length);
+      info.textContent = content.length > HTML_NOTEBOOK_LARGE_THRESHOLD
+        ? `${sizeText} · Large file — autosave is slower`
+        : sizeText;
+    }
+  } catch (error) {
+    showFlash(error.message, "error");
+  }
+}
+
+function openHtmlNotebookEditor(id) {
+  state.editingHtmlNotebookId = id;
+  renderHtmlNotebooks();
+}
+
+function renderHtmlNotebookGutter() {
+  const textarea = els.htmlNotebookContainer.querySelector("#html-notebook-source");
+  const gutter = els.htmlNotebookContainer.querySelector("#html-notebook-gutter");
+  if (!textarea || !gutter) return;
+  const lineCount = textarea.value.split("\n").length;
+  const numbers = new Array(lineCount);
+  for (let i = 0; i < lineCount; i += 1) numbers[i] = i + 1;
+  gutter.textContent = numbers.join("\n");
+  gutter.scrollTop = textarea.scrollTop;
+}
+
+function htmlNotebookFind(direction) {
+  const textarea = els.htmlNotebookContainer.querySelector("#html-notebook-source");
+  const input = els.htmlNotebookContainer.querySelector("#html-notebook-find");
+  if (!textarea || !input) return;
+  const term = input.value;
+  if (!term) return;
+  const haystack = textarea.value;
+  let index;
+  if (direction === "prev") {
+    const before = Math.max(0, textarea.selectionStart - 1);
+    index = haystack.lastIndexOf(term, before);
+    if (index === -1) index = haystack.lastIndexOf(term); // wrap to end
+  } else {
+    index = haystack.indexOf(term, textarea.selectionEnd);
+    if (index === -1) index = haystack.indexOf(term, 0); // wrap to start
+  }
+  if (index === -1) {
+    showFlash("No matches found.", "info");
+    return;
+  }
+  textarea.focus();
+  textarea.setSelectionRange(index, index + term.length);
+  // Approximate scroll: proportion of lines before the match.
+  const totalLines = haystack.split("\n").length;
+  const linesBefore = haystack.slice(0, index).split("\n").length - 1;
+  if (totalLines > 0) {
+    textarea.scrollTop = (linesBefore / totalLines) * textarea.scrollHeight;
+  }
+  renderHtmlNotebookGutter();
+}
+
+function setHtmlNotebookSaveStatus(label, kind = "saved") {
+  const status = els.htmlNotebookContainer.querySelector("#html-notebook-save-status");
+  if (!status) return;
+  window.clearTimeout(htmlNotebookSaveStatusResetTimer);
+  status.textContent = label;
+  status.className = `notebook-save-status ${kind}`;
+}
+
+function resetHtmlNotebookSaveStatusSoon() {
+  window.clearTimeout(htmlNotebookSaveStatusResetTimer);
+  htmlNotebookSaveStatusResetTimer = window.setTimeout(() => {
+    setHtmlNotebookSaveStatus("Saved", "saved");
+  }, 1400);
+}
+
+function reloadHtmlNotebookPreview() {
+  const preview = els.htmlNotebookContainer.querySelector("#html-notebook-preview");
+  const id = state.editingHtmlNotebookId;
+  if (!preview || id == null) return;
+  preview.src = `/api/html-notebooks/${id}/open?t=${Date.now()}`;
+}
+
+function scheduleHtmlNotebookAutosave() {
+  setHtmlNotebookSaveStatus("Autosave pending", "pending");
+  window.clearTimeout(htmlNotebookAutosaveTimer);
+  const textarea = els.htmlNotebookContainer.querySelector("#html-notebook-source");
+  const large = textarea && textarea.value.length > HTML_NOTEBOOK_LARGE_THRESHOLD;
+  const delay = large ? DETAIL_AUTOSAVE_DELAY_MS * 3 : DETAIL_AUTOSAVE_DELAY_MS;
+  htmlNotebookAutosaveTimer = window.setTimeout(() => {
+    saveHtmlNotebook().catch((error) => showFlash(error.message, "error"));
+  }, delay);
+}
+
+async function saveHtmlNotebook() {
+  const id = state.editingHtmlNotebookId;
+  if (id == null) return;
+  const textarea = els.htmlNotebookContainer.querySelector("#html-notebook-source");
+  const titleInput = els.htmlNotebookContainer.querySelector("#html-notebook-title");
+  if (!textarea) return;
+  window.clearTimeout(htmlNotebookAutosaveTimer);
+  htmlNotebookAutosaveTimer = null;
+  setHtmlNotebookSaveStatus("Saving...", "saving");
+  let result;
+  try {
+    result = await api(`/api/html-notebooks/${id}`, {
+      method: "PATCH",
+      body: { content: textarea.value, title: (titleInput?.value || "").trim() },
+    });
+  } catch (error) {
+    setHtmlNotebookSaveStatus("Save failed", "error");
+    showFlash(error.message, "error");
+    return;
+  }
+  const updated = result.notebook;
+  const index = state.htmlNotebooks.findIndex((item) => item.id === updated.id);
+  if (index !== -1) {
+    state.htmlNotebooks[index].updated_at = updated.updated_at;
+    state.htmlNotebooks[index].title = updated.title;
+  }
+  setHtmlNotebookSaveStatus("Saved", "saved");
+  resetHtmlNotebookSaveStatusSoon();
+  reloadHtmlNotebookPreview();
+}
+
+async function flushHtmlNotebookSave() {
+  if (state.editingHtmlNotebookId == null) return;
+  await saveHtmlNotebook().catch((error) => showFlash(error.message, "error"));
+}
+
+async function addHtmlNotebook() {
+  const titleInput = els.htmlNotebookContainer.querySelector("#html-notebook-add-title");
+  const pathInput = els.htmlNotebookContainer.querySelector("#html-notebook-add-path");
+  const path = (pathInput?.value || "").trim();
+  const title = (titleInput?.value || "").trim();
+  if (!path) {
+    showFlash("Enter a path to an .html file.", "error");
+    return;
+  }
+  let result;
+  try {
+    result = await api("/api/html-notebooks", {
+      method: "POST",
+      body: title ? { path, title } : { path },
+    });
+  } catch (error) {
+    showFlash(error.message, "error");
+    return;
+  }
+  state.htmlNotebooks.unshift(result.notebook);
+  renderHtmlNotebooks();
+  els.htmlNotebookContainer.querySelector("#html-notebook-add-path")?.focus();
+  showFlash("HTML notebook added.");
+}
+
+async function removeHtmlNotebook(id) {
+  const nb = htmlNotebookById(id);
+  if (!window.confirm(`Remove "${nb?.title || "this notebook"}"? The managed copy will be deleted.`)) return;
+  try {
+    await api(`/api/html-notebooks/${id}`, { method: "DELETE" });
+  } catch (error) {
+    showFlash(error.message, "error");
+    return;
+  }
+  state.htmlNotebooks = state.htmlNotebooks.filter((item) => item.id !== id);
+  if (state.editingHtmlNotebookId === id) state.editingHtmlNotebookId = null;
+  renderHtmlNotebooks();
+  showFlash("HTML notebook removed.");
+}
+
 function waitingScanTooltip() {
   if (state.waitingToScanLoading) {
     return "Checking configured folders for files changed since the last scan.";
@@ -2515,15 +2802,91 @@ els.notebookContainer.addEventListener("pointerdown", (event) => {
   startNotebookResize(event, resizer.dataset.resizer);
 });
 
+// HTML Notebooks view actions
+els.htmlNotebookContainer.addEventListener("click", async (event) => {
+  const addBtn = event.target.closest("#html-notebook-add-btn");
+  const openBtn = event.target.closest("[data-html-open]");
+  const editBtn = event.target.closest("[data-html-edit]");
+  const removeBtn = event.target.closest("[data-html-remove]");
+  const saveBtn = event.target.closest("#html-notebook-save");
+  const refreshBtn = event.target.closest("#html-notebook-refresh");
+  const closeBtn = event.target.closest("#html-notebook-close");
+  const findPrev = event.target.closest("#html-notebook-find-prev");
+  const findNext = event.target.closest("#html-notebook-find-next");
+  try {
+    if (addBtn) { await addHtmlNotebook(); return; }
+    if (openBtn) {
+      window.open(`/api/html-notebooks/${Number(openBtn.dataset.htmlOpen)}/open`, "_blank");
+      return;
+    }
+    if (editBtn) {
+      const id = Number(editBtn.dataset.htmlEdit);
+      if (id !== state.editingHtmlNotebookId) {
+        await flushHtmlNotebookSave();
+        openHtmlNotebookEditor(id);
+      }
+      return;
+    }
+    if (removeBtn) { await removeHtmlNotebook(Number(removeBtn.dataset.htmlRemove)); return; }
+    if (saveBtn) { await saveHtmlNotebook(); showFlash("HTML notebook saved."); return; }
+    if (refreshBtn) { reloadHtmlNotebookPreview(); return; }
+    if (closeBtn) {
+      await flushHtmlNotebookSave();
+      state.editingHtmlNotebookId = null;
+      renderHtmlNotebooks();
+      return;
+    }
+    if (findPrev) { htmlNotebookFind("prev"); return; }
+    if (findNext) { htmlNotebookFind("next"); return; }
+  } catch (error) {
+    showFlash(error.message, "error");
+  }
+});
+
+els.htmlNotebookContainer.addEventListener("input", (event) => {
+  if (event.target.matches("#html-notebook-source")) {
+    renderHtmlNotebookGutter();
+    scheduleHtmlNotebookAutosave();
+    return;
+  }
+  if (event.target.matches("#html-notebook-title")) {
+    scheduleHtmlNotebookAutosave();
+  }
+});
+
+els.htmlNotebookContainer.addEventListener("keydown", (event) => {
+  if (event.target.matches("#html-notebook-find") && event.key === "Enter") {
+    event.preventDefault();
+    htmlNotebookFind(event.shiftKey ? "prev" : "next");
+    return;
+  }
+  if (event.target.matches("#html-notebook-add-path, #html-notebook-add-title") && event.key === "Enter") {
+    event.preventDefault();
+    addHtmlNotebook().catch((error) => showFlash(error.message, "error"));
+  }
+});
+
+// Keep the line-number gutter aligned with the textarea while scrolling. The
+// scroll event does not bubble, so listen in the capture phase.
+els.htmlNotebookContainer.addEventListener("scroll", (event) => {
+  if (!event.target.matches || !event.target.matches("#html-notebook-source")) return;
+  const gutter = els.htmlNotebookContainer.querySelector("#html-notebook-gutter");
+  if (gutter) gutter.scrollTop = event.target.scrollTop;
+}, true);
+
 function setLibraryViewMode(mode) {
   state.viewMode = mode;
   els.tablePanel.classList.toggle("graph-mode-active", mode === "graph");
   els.tablePanel.classList.toggle("notebook-mode-active", mode === "notebook");
+  els.tablePanel.classList.toggle("html-notebooks-mode-active", mode === "html-notebooks");
   document.body.classList.toggle("notebook-app-mode", mode === "notebook");
+  document.body.classList.toggle("html-notebook-app-mode", mode === "html-notebooks");
   els.viewToggleBtn.textContent = mode === "graph" ? "List View" : "Graph View";
   els.viewToggleBtn.classList.toggle("active", mode === "graph");
   els.notebookToggleBtn.textContent = mode === "notebook" ? "Library View" : "Notebook";
   els.notebookToggleBtn.classList.toggle("active", mode === "notebook");
+  els.htmlNotebooksToggleBtn.textContent = mode === "html-notebooks" ? "Library View" : "HTML Notebooks";
+  els.htmlNotebooksToggleBtn.classList.toggle("active", mode === "html-notebooks");
 
   if (mode !== "graph" && state.networkInstance) {
     state.networkInstance.destroy();
@@ -2537,6 +2900,9 @@ function setLibraryViewMode(mode) {
     applyNotebookPaneSizes();
     renderNotebook();
   }
+  if (mode === "html-notebooks") {
+    renderHtmlNotebooks();
+  }
 }
 
 window.addEventListener("pagehide", closeBrowserSession);
@@ -2545,6 +2911,9 @@ window.addEventListener("pagehide", closeBrowserSession);
 els.viewToggleBtn.addEventListener("click", async () => {
   if (state.viewMode === "notebook") {
     await saveNotebookNote({ renderAfterSave: false }).catch((error) => showFlash(error.message, "error"));
+  }
+  if (state.viewMode === "html-notebooks") {
+    await flushHtmlNotebookSave();
   }
   setLibraryViewMode(state.viewMode === "graph" ? "list" : "graph");
 });
@@ -2555,7 +2924,22 @@ els.notebookToggleBtn.addEventListener("click", async () => {
     setLibraryViewMode("list");
     return;
   }
+  if (state.viewMode === "html-notebooks") {
+    await flushHtmlNotebookSave();
+  }
   setLibraryViewMode("notebook");
+});
+
+els.htmlNotebooksToggleBtn.addEventListener("click", async () => {
+  if (state.viewMode === "html-notebooks") {
+    await flushHtmlNotebookSave();
+    setLibraryViewMode("list");
+    return;
+  }
+  if (state.viewMode === "notebook") {
+    await saveNotebookNote({ renderAfterSave: false }).catch((error) => showFlash(error.message, "error"));
+  }
+  setLibraryViewMode("html-notebooks");
 });
 
 // Freeze physics checkbox listener
