@@ -431,3 +431,29 @@ def test_update_notebook_note_replaces_topics(db):
     assert note["topics"] == ["Academic"]
     # updated_at bumps even when only topics change
     assert note["updated_at"] > created_at
+
+
+def test_html_notebook_crud(tmp_path):
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+
+    nb_id = db.add_html_notebook("Lit Map", "/src/map.html", "stored-1.html")
+    assert isinstance(nb_id, int)
+
+    nb = db.get_html_notebook(nb_id)
+    assert nb["title"] == "Lit Map"
+    assert nb["source_path"] == "/src/map.html"
+    assert nb["stored_filename"] == "stored-1.html"
+    assert nb["created_at"] and nb["updated_at"]
+
+    before = nb["updated_at"]
+    db.update_html_notebook(nb_id, title="Renamed")
+    assert db.get_html_notebook(nb_id)["title"] == "Renamed"
+    assert db.get_html_notebook(nb_id)["updated_at"] >= before
+
+    db.add_html_notebook("Second", "/src/b.html", "stored-2.html")
+    assert [n["title"] for n in db.list_html_notebooks()][:1] == ["Renamed"]
+
+    db.delete_html_notebook(nb_id)
+    assert db.get_html_notebook(nb_id) is None
+    db.close()

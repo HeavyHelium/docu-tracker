@@ -86,6 +86,15 @@ class Database:
                 FOREIGN KEY (note_id) REFERENCES notebook_notes(id) ON DELETE CASCADE,
                 FOREIGN KEY (topic_id) REFERENCES topics(id)
             );
+
+            CREATE TABLE IF NOT EXISTS html_notebooks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                source_path TEXT NOT NULL DEFAULT '',
+                stored_filename TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
         """)
         self.conn.commit()
         self._migrate()
@@ -466,6 +475,58 @@ class Database:
 
     def delete_notebook_note(self, note_id):
         self.conn.execute("DELETE FROM notebook_notes WHERE id = ?", (note_id,))
+        self.conn.commit()
+
+    def get_html_notebook(self, notebook_id):
+        row = self.conn.execute(
+            "SELECT id, title, source_path, stored_filename, created_at, updated_at "
+            "FROM html_notebooks WHERE id = ?",
+            (notebook_id,),
+        ).fetchone()
+        if not row:
+            return None
+        return {
+            "id": row[0],
+            "title": row[1],
+            "source_path": row[2],
+            "stored_filename": row[3],
+            "created_at": row[4],
+            "updated_at": row[5],
+        }
+
+    def list_html_notebooks(self):
+        rows = self.conn.execute(
+            "SELECT id FROM html_notebooks ORDER BY updated_at ASC, id ASC"
+        ).fetchall()
+        return [self.get_html_notebook(row[0]) for row in rows]
+
+    def add_html_notebook(self, title, source_path, stored_filename):
+        now = datetime.now(timezone.utc).isoformat()
+        cursor = self.conn.execute(
+            "INSERT INTO html_notebooks (title, source_path, stored_filename, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (title, source_path, stored_filename, now, now),
+        )
+        self.conn.commit()
+        return cursor.lastrowid
+
+    def update_html_notebook(self, notebook_id, title=None):
+        fields = []
+        params = []
+        if title is not None:
+            fields.append("title = ?")
+            params.append(title)
+        fields.append("updated_at = ?")
+        params.append(datetime.now(timezone.utc).isoformat())
+        params.append(notebook_id)
+        self.conn.execute(
+            f"UPDATE html_notebooks SET {', '.join(fields)} WHERE id = ?",
+            params,
+        )
+        self.conn.commit()
+
+    def delete_html_notebook(self, notebook_id):
+        self.conn.execute("DELETE FROM html_notebooks WHERE id = ?", (notebook_id,))
         self.conn.commit()
 
     def list_topics(self):
