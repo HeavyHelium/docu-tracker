@@ -94,7 +94,8 @@ class Database:
                 stored_filename TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
-                read_only INTEGER NOT NULL DEFAULT 0
+                read_only INTEGER NOT NULL DEFAULT 0,
+                notes_state TEXT NOT NULL DEFAULT '{}'
             );
         """)
         self.conn.commit()
@@ -115,6 +116,11 @@ class Database:
         if html_notebook_columns and "read_only" not in html_notebook_columns:
             self.conn.execute(
                 "ALTER TABLE html_notebooks ADD COLUMN read_only INTEGER NOT NULL DEFAULT 0"
+            )
+            self.conn.commit()
+        if html_notebook_columns and "notes_state" not in html_notebook_columns:
+            self.conn.execute(
+                "ALTER TABLE html_notebooks ADD COLUMN notes_state TEXT NOT NULL DEFAULT '{}'"
             )
             self.conn.commit()
 
@@ -489,7 +495,7 @@ class Database:
 
     def get_html_notebook(self, notebook_id):
         row = self.conn.execute(
-            "SELECT id, title, source_path, stored_filename, created_at, updated_at, read_only "
+            "SELECT id, title, source_path, stored_filename, created_at, updated_at, read_only, notes_state "
             "FROM html_notebooks WHERE id = ?",
             (notebook_id,),
         ).fetchone()
@@ -503,6 +509,7 @@ class Database:
             "created_at": row[4],
             "updated_at": row[5],
             "read_only": bool(row[6]),
+            "notes_state": row[7] or "{}",
         }
 
     def list_html_notebooks(self):
@@ -538,6 +545,14 @@ class Database:
 
     def delete_html_notebook(self, notebook_id):
         self.conn.execute("DELETE FROM html_notebooks WHERE id = ?", (notebook_id,))
+        self.conn.commit()
+
+    def set_html_notebook_notes(self, notebook_id, notes_state_json):
+        """Persist the notebook's internal notes workspace as a JSON string."""
+        self.conn.execute(
+            "UPDATE html_notebooks SET notes_state = ?, updated_at = ? WHERE id = ?",
+            (notes_state_json, datetime.now(timezone.utc).isoformat(), notebook_id),
+        )
         self.conn.commit()
 
     def list_topics(self):

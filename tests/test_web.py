@@ -790,43 +790,60 @@ def test_html_notebook_content_open_and_isolation(tmp_path, monkeypatch):
     app = DocuTrackerWebApp(config_dir=str(config_dir), cwd=str(tmp_path))
 
     source = tmp_path / "map.html"
-    source.write_text("<html><body>original</body></html>")
+    source.write_text("<html><head></head><body>original</body></html>")
     nb = _add_html_notebook(app, source)
 
     def start_response(status, headers):
         start_response.status = status
         start_response.headers = dict(headers)
 
-    # edit content
+    # notes start empty
+    notes = json.loads(
+        b"".join(
+            app(
+                build_test_environ("GET", f"/api/html-notebooks/{nb['id']}/notes"),
+                start_response,
+            )
+        )
+    )
+    assert notes == {}
+
+    # save the notebook's internal notes workspace
     app(
         build_test_environ(
-            "PATCH",
-            f"/api/html-notebooks/{nb['id']}",
-            payload={"content": "<html><body>edited</body></html>"},
+            "PUT",
+            f"/api/html-notebooks/{nb['id']}/notes",
+            payload={"epistemic-failure-map-notebook-v1": "{\"notes\":[1]}"},
         ),
         start_response,
     )
+    assert start_response.status.startswith("200")
 
-    # GET content returns the edit
-    content = b"".join(
-        app(
-            build_test_environ("GET", f"/api/html-notebooks/{nb['id']}/content"),
-            start_response,
+    # GET notes returns the saved state
+    notes = json.loads(
+        b"".join(
+            app(
+                build_test_environ("GET", f"/api/html-notebooks/{nb['id']}/notes"),
+                start_response,
+            )
         )
-    ).decode("utf-8")
-    assert "edited" in content
+    )
+    assert notes == {"epistemic-failure-map-notebook-v1": "{\"notes\":[1]}"}
 
-    # /open serves text/html
-    b"".join(
+    # /open serves text/html and injects the notes bridge seeded with the state
+    open_body = b"".join(
         app(
             build_test_environ("GET", f"/api/html-notebooks/{nb['id']}/open"),
             start_response,
         )
-    )
+    ).decode("utf-8")
     assert start_response.headers["Content-Type"] == "text/html; charset=utf-8"
+    assert "localStorage" in open_body  # bridge injected
+    assert "epistemic-failure-map-notebook-v1" in open_body  # seeded
+    assert "original" in open_body  # original document content preserved
 
     # the ORIGINAL source file is untouched
-    assert source.read_text() == "<html><body>original</body></html>"
+    assert source.read_text() == "<html><head></head><body>original</body></html>"
 
 
 def test_html_notebook_validation_and_404(tmp_path, monkeypatch):
@@ -866,7 +883,12 @@ def test_html_notebook_validation_and_404(tmp_path, monkeypatch):
 
     # unknown id
     app(
-        build_test_environ("GET", "/api/html-notebooks/999/content"),
+        build_test_environ("GET", "/api/html-notebooks/999/notes"),
+        start_response,
+    )
+    assert start_response.status.startswith("404")
+    app(
+        build_test_environ("GET", "/api/html-notebooks/999/open"),
         start_response,
     )
     assert start_response.status.startswith("404")
@@ -908,26 +930,36 @@ def test_html_notebook_read_only(tmp_path, monkeypatch):
     )
     assert state["html_notebooks"][0]["read_only"] is True
 
-    # editing content on a read-only notebook is rejected
+    # saving notes to a read-only notebook is rejected (frozen)
     app(
         build_test_environ(
-            "PATCH",
-            f"/api/html-notebooks/{created['id']}",
-            payload={"content": "<html><body>hacked</body></html>"},
+            "PUT",
+            f"/api/html-notebooks/{created['id']}/notes",
+            payload={"k": "v"},
         ),
         start_response,
     )
     assert captured["status"].startswith("400")
-    # the managed copy is unchanged after the rejected edit
+    # its notes stay empty after the rejected save
+    notes = json.loads(
+        b"".join(
+            app(
+                build_test_environ("GET", f"/api/html-notebooks/{created['id']}/notes"),
+                start_response,
+            )
+        )
+    )
+    assert notes == {}
+    # but a read-only notebook still opens with its (frozen) notes bridge
     open_body = b"".join(
         app(
             build_test_environ("GET", f"/api/html-notebooks/{created['id']}/open"),
             start_response,
         )
     ).decode("utf-8")
-    assert "read me" in open_body and "hacked" not in open_body
+    assert "read me" in open_body
 
-    # a default (editable) notebook still accepts content edits
+    # a default (editable) notebook accepts notes saves
     editable_src = tmp_path / "editable.html"
     editable_src.write_text("<html><body>edit me</body></html>")
     body = app(
@@ -942,9 +974,9 @@ def test_html_notebook_read_only(tmp_path, monkeypatch):
     assert editable["read_only"] is False
     app(
         build_test_environ(
-            "PATCH",
-            f"/api/html-notebooks/{editable['id']}",
-            payload={"content": "<html><body>changed</body></html>"},
+            "PUT",
+            f"/api/html-notebooks/{editable['id']}/notes",
+            payload={"k": "v"},
         ),
         start_response,
     )

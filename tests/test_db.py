@@ -471,3 +471,16 @@ def test_html_notebook_read_only_flag(tmp_path):
     assert db.get_html_notebook(editable_id)["read_only"] is False
     assert db.get_html_notebook(ro_id)["read_only"] is True
     db.close()
+
+
+def test_html_notebook_notes_state(tmp_path):
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+
+    nb_id = db.add_html_notebook("Map", "/src/m.html", "m.html")
+    # notes default to an empty JSON object
+    assert db.get_html_notebook(nb_id)["notes_state"] == "{}"
+
+    db.set_html_notebook_notes(nb_id, '{"key": "value"}')
+    assert db.get_html_notebook(nb_id)["notes_state"] == '{"key": "value"}'
+    db.close()
