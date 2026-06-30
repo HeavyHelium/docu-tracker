@@ -1402,11 +1402,6 @@ body.html-notebook-app-mode .library-actions {
   background: var(--paper);
 }
 
-.html-notebook-card.selected {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent);
-}
-
 .html-notebook-card-info {
   display: flex;
   flex-direction: column;
@@ -1433,132 +1428,9 @@ body.html-notebook-app-mode .library-actions {
   flex-shrink: 0;
 }
 
-.html-notebook-editor-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-height: 0;
-}
-
-.html-notebook-editor-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 14px;
-  flex-wrap: wrap;
-}
-
-.html-notebook-editor-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-}
-
-.html-notebook-info {
-  margin: 0;
-  font-size: 0.78rem;
-  color: var(--muted);
-}
-
-.html-notebook-editor-actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  align-items: center;
-}
-
-.html-notebook-find {
-  display: flex;
-  gap: 4px;
-  align-items: center;
-}
-
-.html-notebook-find .html-notebook-input {
-  flex: 0 1 160px;
-  padding: 6px 10px;
-}
-
-.html-notebook-compose {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 14px;
-  min-height: 0;
-  height: 72vh;
-}
-
-.html-notebook-source-wrap {
-  display: flex;
-  min-height: 0;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  overflow: hidden;
-  background: var(--paper);
-}
-
-.html-notebook-gutter {
-  flex: 0 0 auto;
-  width: 52px;
-  margin: 0;
-  padding: 12px 8px;
-  text-align: right;
-  font-family: "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+.html-notebook-hint {
+  margin: 4px 0 0;
   font-size: 0.82rem;
-  line-height: 1.55;
-  color: var(--muted);
-  background: rgba(36, 53, 48, 0.05);
-  border-right: 1px solid var(--line);
-  white-space: pre;
-  overflow: hidden;
-  user-select: none;
-  -webkit-user-select: none;
-}
-
-.html-notebook-source {
-  flex: 1 1 auto;
-  margin: 0;
-  padding: 12px;
-  border: none;
-  resize: none;
-  font-family: "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
-  font-size: 0.82rem;
-  line-height: 1.55;
-  color: var(--text);
-  background: transparent;
-  white-space: pre;
-  overflow: auto;
-}
-
-.html-notebook-source:focus {
-  outline: none;
-}
-
-.html-notebook-preview-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-height: 0;
-}
-
-.html-notebook-preview {
-  flex: 1 1 auto;
-  width: 100%;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: #ffffff;
-  min-height: 0;
-}
-
-@media (max-width: 900px) {
-  .html-notebook-compose {
-    grid-template-columns: 1fr;
-    height: auto;
-  }
-
-  .html-notebook-source-wrap,
-  .html-notebook-preview {
-    height: 50vh;
-  }
 }
 
 .notebook-layout {
