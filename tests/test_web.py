@@ -715,6 +715,45 @@ def test_notebook_topics_round_trip(tmp_path, monkeypatch):
     assert bad_item["status"].startswith("400")
 
 
+def test_html_notebook_add_list_delete(tmp_path, monkeypatch):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    app = DocuTrackerWebApp(config_dir=str(config_dir), cwd=str(tmp_path))
+
+    source = tmp_path / "map.html"
+    source.write_text("<html><body>Hello map</body></html>")
+
+    captured = {}
+    def start_response(status, headers):
+        captured["status"] = status
+
+    # add
+    body = app(
+        build_test_environ("POST", "/api/html-notebooks",
+                           payload={"path": str(source), "title": "Map"}),
+        start_response,
+    )
+    created = json.loads(b"".join(body))["notebook"]
+    assert captured["status"].startswith("201")
+    assert created["title"] == "Map"
+    assert created["source_path"] == str(source)
+
+    stored_dir = config_dir / "notebooks"
+    assert len(list(stored_dir.iterdir())) == 1
+
+    # appears in state
+    state = json.loads(
+        b"".join(app(build_test_environ("GET", "/api/state"), start_response))
+    )
+    assert [n["title"] for n in state["html_notebooks"]] == ["Map"]
+
+    # delete removes the managed copy
+    app(build_test_environ("DELETE", f"/api/html-notebooks/{created['id']}"), start_response)
+    assert captured["status"].startswith("200")
+    assert list(stored_dir.iterdir()) == []
+
+
 def test_web_command_invokes_server(tmp_path, monkeypatch):
     config_dir = tmp_path / "config"
     config_dir.mkdir()
