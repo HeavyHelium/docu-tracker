@@ -163,6 +163,7 @@ def _serialize_html_notebook(notebook):
         "source_path": notebook["source_path"] or "",
         "created_at": notebook["created_at"],
         "updated_at": notebook["updated_at"],
+        "read_only": bool(notebook["read_only"]),
     }
 
 
@@ -642,6 +643,7 @@ class DocuTrackerWebApp:
             raise HTTPError(400, "Notebook must be an .html or .htm file")
 
         title = (payload.get("title") or "").strip() or source.name
+        read_only = bool(payload.get("read_only"))
         notebook_dir = self._html_notebook_dir()
         notebook_dir.mkdir(parents=True, exist_ok=True)
         stored_filename = (
@@ -650,7 +652,9 @@ class DocuTrackerWebApp:
         shutil.copyfile(source, notebook_dir / stored_filename)
 
         with database_for_path(self.db_path) as db:
-            notebook_id = db.add_html_notebook(title, str(source), stored_filename)
+            notebook_id = db.add_html_notebook(
+                title, str(source), stored_filename, read_only=read_only
+            )
             return {"notebook": _serialize_html_notebook(db.get_html_notebook(notebook_id))}
 
     def update_html_notebook(self, notebook_id, payload):
@@ -669,6 +673,8 @@ class DocuTrackerWebApp:
 
             content = payload.get("content") if "content" in payload else None
             if content is not None:
+                if notebook["read_only"]:
+                    raise HTTPError(400, "This notebook is read-only and cannot be edited")
                 if not isinstance(content, str):
                     raise HTTPError(400, "Notebook content must be a string")
                 self._html_notebook_path(notebook).write_text(content, encoding="utf-8")

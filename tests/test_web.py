@@ -875,3 +875,77 @@ def test_html_notebook_validation_and_404(tmp_path, monkeypatch):
         start_response,
     )
     assert start_response.status.startswith("404")
+
+
+def test_html_notebook_read_only(tmp_path, monkeypatch):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    app = DocuTrackerWebApp(config_dir=str(config_dir), cwd=str(tmp_path))
+
+    source = tmp_path / "reader.html"
+    source.write_text("<html><body>read me</body></html>")
+
+    captured = {}
+
+    def start_response(status, headers):
+        captured["status"] = status
+
+    # add as read-only
+    body = app(
+        build_test_environ(
+            "POST",
+            "/api/html-notebooks",
+            payload={"path": str(source), "title": "Reader", "read_only": True},
+        ),
+        start_response,
+    )
+    created = json.loads(b"".join(body))["notebook"]
+    assert created["read_only"] is True
+
+    # state reflects the flag
+    state = json.loads(
+        b"".join(app(build_test_environ("GET", "/api/state"), start_response))
+    )
+    assert state["html_notebooks"][0]["read_only"] is True
+
+    # editing content on a read-only notebook is rejected
+    app(
+        build_test_environ(
+            "PATCH",
+            f"/api/html-notebooks/{created['id']}",
+            payload={"content": "<html><body>hacked</body></html>"},
+        ),
+        start_response,
+    )
+    assert captured["status"].startswith("400")
+    # the managed copy is unchanged after the rejected edit
+    open_body = b"".join(
+        app(
+            build_test_environ("GET", f"/api/html-notebooks/{created['id']}/open"),
+            start_response,
+        )
+    ).decode("utf-8")
+    assert "read me" in open_body and "hacked" not in open_body
+
+    # a default (editable) notebook still accepts content edits
+    editable_src = tmp_path / "editable.html"
+    editable_src.write_text("<html><body>edit me</body></html>")
+    body = app(
+        build_test_environ(
+            "POST",
+            "/api/html-notebooks",
+            payload={"path": str(editable_src), "title": "Editable"},
+        ),
+        start_response,
+    )
+    editable = json.loads(b"".join(body))["notebook"]
+    assert editable["read_only"] is False
+    app(
+        build_test_environ(
+            "PATCH",
+            f"/api/html-notebooks/{editable['id']}",
+            payload={"content": "<html><body>changed</body></html>"},
+        ),
+        start_response,
+    )
+    assert captured["status"].startswith("200")

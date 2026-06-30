@@ -93,7 +93,8 @@ class Database:
                 source_path TEXT NOT NULL DEFAULT '',
                 stored_filename TEXT NOT NULL,
                 created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                updated_at TEXT NOT NULL,
+                read_only INTEGER NOT NULL DEFAULT 0
             );
         """)
         self.conn.commit()
@@ -106,6 +107,15 @@ class Database:
         }
         if "description" not in columns:
             self.conn.execute("ALTER TABLE topics ADD COLUMN description TEXT DEFAULT ''")
+            self.conn.commit()
+
+        html_notebook_columns = {
+            r[1] for r in self.conn.execute("PRAGMA table_info(html_notebooks)").fetchall()
+        }
+        if html_notebook_columns and "read_only" not in html_notebook_columns:
+            self.conn.execute(
+                "ALTER TABLE html_notebooks ADD COLUMN read_only INTEGER NOT NULL DEFAULT 0"
+            )
             self.conn.commit()
 
     def _seed_topics(self):
@@ -479,7 +489,7 @@ class Database:
 
     def get_html_notebook(self, notebook_id):
         row = self.conn.execute(
-            "SELECT id, title, source_path, stored_filename, created_at, updated_at "
+            "SELECT id, title, source_path, stored_filename, created_at, updated_at, read_only "
             "FROM html_notebooks WHERE id = ?",
             (notebook_id,),
         ).fetchone()
@@ -492,6 +502,7 @@ class Database:
             "stored_filename": row[3],
             "created_at": row[4],
             "updated_at": row[5],
+            "read_only": bool(row[6]),
         }
 
     def list_html_notebooks(self):
@@ -500,12 +511,12 @@ class Database:
         ).fetchall()
         return [self.get_html_notebook(row[0]) for row in rows]
 
-    def add_html_notebook(self, title, source_path, stored_filename):
+    def add_html_notebook(self, title, source_path, stored_filename, read_only=False):
         now = datetime.now(timezone.utc).isoformat()
         cursor = self.conn.execute(
-            "INSERT INTO html_notebooks (title, source_path, stored_filename, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (title, source_path, stored_filename, now, now),
+            "INSERT INTO html_notebooks (title, source_path, stored_filename, created_at, updated_at, read_only) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (title, source_path, stored_filename, now, now, 1 if read_only else 0),
         )
         self.conn.commit()
         return cursor.lastrowid

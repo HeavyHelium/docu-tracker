@@ -459,3 +459,15 @@ def test_html_notebook_crud(tmp_path):
     db.delete_html_notebook(nb_id)
     assert db.get_html_notebook(nb_id) is None
     db.close()
+
+
+def test_html_notebook_read_only_flag(tmp_path):
+    db = Database(str(tmp_path / "t.db"))
+    db.initialize()
+
+    editable_id = db.add_html_notebook("Editable", "/src/e.html", "e.html")
+    ro_id = db.add_html_notebook("Reader", "/src/r.html", "r.html", read_only=True)
+
+    assert db.get_html_notebook(editable_id)["read_only"] is False
+    assert db.get_html_notebook(ro_id)["read_only"] is True
+    db.close()

@@ -1747,6 +1747,9 @@ function renderHtmlNotebooks() {
           <div class="html-notebook-add-form">
             <input id="html-notebook-add-title" class="html-notebook-input" type="text" placeholder="Title (optional)">
             <input id="html-notebook-add-path" class="html-notebook-input" type="text" placeholder="/path/to/notebook.html">
+            <label class="html-notebook-readonly-toggle" title="Import for reading only — no in-app editor">
+              <input id="html-notebook-add-readonly" type="checkbox"> Read-only
+            </label>
             <button id="html-notebook-add-btn" class="button button-primary" type="button">Add</button>
           </div>
         </div>
@@ -1754,13 +1757,16 @@ function renderHtmlNotebooks() {
           ${state.htmlNotebooks.length ? state.htmlNotebooks.map((nb) => `
             <div class="html-notebook-card ${nb.id === state.editingHtmlNotebookId ? "selected" : ""}">
               <div class="html-notebook-card-info">
-                <strong>${escapeHtml(nb.title || "Untitled notebook")}</strong>
+                <strong>
+                  ${escapeHtml(nb.title || "Untitled notebook")}
+                  ${nb.read_only ? `<span class="html-notebook-badge">read-only</span>` : ""}
+                </strong>
                 <small class="muted">imported from ${escapeHtml(nb.source_path)}</small>
                 <small class="muted">Updated ${escapeHtml(formatDateTime(nb.updated_at))}</small>
               </div>
               <div class="html-notebook-card-actions">
                 <button type="button" class="button" data-html-open="${nb.id}">Open</button>
-                <button type="button" class="button" data-html-edit="${nb.id}">Edit</button>
+                ${nb.read_only ? "" : `<button type="button" class="button" data-html-edit="${nb.id}">Edit</button>`}
                 <button type="button" class="button button-danger" data-html-remove="${nb.id}">Remove</button>
               </div>
             </div>
@@ -1957,17 +1963,22 @@ async function flushHtmlNotebookSave() {
 async function addHtmlNotebook() {
   const titleInput = els.htmlNotebookContainer.querySelector("#html-notebook-add-title");
   const pathInput = els.htmlNotebookContainer.querySelector("#html-notebook-add-path");
+  const readOnlyInput = els.htmlNotebookContainer.querySelector("#html-notebook-add-readonly");
   const path = (pathInput?.value || "").trim();
   const title = (titleInput?.value || "").trim();
+  const readOnly = !!readOnlyInput?.checked;
   if (!path) {
     showFlash("Enter a path to an .html file.", "error");
     return;
   }
   let result;
   try {
+    const body = { path };
+    if (title) body.title = title;
+    if (readOnly) body.read_only = true;
     result = await api("/api/html-notebooks", {
       method: "POST",
-      body: title ? { path, title } : { path },
+      body,
     });
   } catch (error) {
     showFlash(error.message, "error");
