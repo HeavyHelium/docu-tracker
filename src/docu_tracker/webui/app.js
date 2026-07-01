@@ -1103,7 +1103,9 @@ function displayMathCloseMatch(line, closeDelimiter) {
   return line.match(/^(.*?)\s*\]\s*$/);
 }
 
-function renderMarkdown(value) {
+function renderMarkdown(value, options = {}) {
+  const headingIds = options.headingIds || [];
+  let headingIndex = 0;
   const lines = String(value || "").split(/\r?\n/);
   const html = [];
   let paragraph = [];
@@ -1228,7 +1230,9 @@ function renderMarkdown(value) {
       flushParagraph();
       flushList();
       const level = heading[1].length + 2;
-      html.push(`<h${level}>${renderInlineMarkdown(heading[2])}</h${level}>`);
+      const id = headingIds[headingIndex++];
+      const idAttribute = id ? ` id="${escapeAttribute(id)}"` : "";
+      html.push(`<h${level}${idAttribute}>${renderInlineMarkdown(heading[2])}</h${level}>`);
       continue;
     }
 
@@ -1429,51 +1433,132 @@ function documentMarkdownLink(doc) {
   return `[${title}](${url})`;
 }
 
+function printContentAnchor(note, suffix = "") {
+  const base = "pdf-note-" + String(note.id || "new");
+  return suffix ? base + "-" + suffix : base;
+}
+
+function plainMarkdownLabel(value) {
+  return String(value || "")
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, (_match, alt) => alt)
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, (_match, label) => label)
+    .replace(/[`*_~]/g, "")
+    .replace(/:#[0-9a-fA-F]{3,8}\[([^\]]+)\]/g, (_match, label) => label)
+    .replace(/:[a-zA-Z]+\[([^\]]+)\]/g, (_match, label) => label)
+    .trim();
+}
+
+function notebookHeadingEntries(note) {
+  const entries = [];
+  String(note.body || "").split(/\r?\n/).forEach((line) => {
+    const match = line.trim().match(/^(#{1,3})\s+(.+)$/);
+    if (!match) return;
+    entries.push({
+      id: printContentAnchor(note, "heading-" + entries.length),
+      title: plainMarkdownLabel(match[2]) || "Untitled section",
+      level: match[1].length,
+    });
+  });
+  return entries;
+}
+
+function buildPrintContentsPanel(notes) {
+  const noteItems = notes.map((note) => {
+    const headings = notebookHeadingEntries(note);
+    const meta = [];
+    if ((note.topics || []).length) meta.push((note.topics || []).length + " topics");
+    const linkedCount = noteReferencedDocuments(note).length;
+    if (linkedCount) meta.push(linkedCount + (linkedCount === 1 ? " linked file" : " linked files"));
+    const metaHtml = meta.length ? "<div class=\"pdf-contents-meta\">" + meta.map((item) => "<span>" + escapeHtml(item) + "</span>").join("") + "</div>" : "";
+    const headingHtml = headings.length
+      ? "<ol class=\"pdf-heading-list\">" + headings.map((heading) => "<li class=\"pdf-heading-depth-" + heading.level + "\"><a href=\"#" + escapeAttribute(heading.id) + "\">" + escapeHtml(heading.title) + "</a></li>").join("") + "</ol>"
+      : "";
+    return "<li><a class=\"pdf-note-link\" href=\"#" + escapeAttribute(printContentAnchor(note)) + "\">" + escapeHtml(note.title || "Untitled note") + "</a>" + metaHtml + headingHtml + "</li>";
+  }).join("");
+  return "<aside class=\"pdf-contents-panel\" aria-label=\"Print preview contents\"><div class=\"pdf-contents-card\"><p class=\"pdf-panel-kicker\">Print preview</p><h2>Contents</h2><nav><ol class=\"pdf-note-list\">" + noteItems + "</ol></nav></div></aside>";
+}
+
 function buildNoteExportSection(note) {
   const title = escapeHtml(note.title || "Untitled note");
+  const headings = notebookHeadingEntries(note);
+  const headingIds = headings.map((heading) => heading.id);
   const topics = (note.topics || []).length
-    ? `<div class="pdf-note-topics">${note.topics.map((t) => `<span>${escapeHtml(t)}</span>`).join("")}</div>`
+    ? "<div class=\"pdf-note-topics\">" + note.topics.map((t) => "<span>" + escapeHtml(t) + "</span>").join("") + "</div>"
     : "";
   const linkedDocs = noteReferencedDocuments(note);
   const linked = linkedDocs.length
-    ? `<section class="pdf-linked"><h2>Linked files</h2><ul>${linkedDocs.map((doc) => `<li><strong>${escapeHtml(doc.title || `Document #${doc.id}`)}</strong> — ${escapeHtml(doc.authors || doc.source || "No authors")}</li>`).join("")}</ul></section>`
+    ? "<section class=\"pdf-linked\"><h2>Linked files</h2><ul>" + linkedDocs.map((doc) => "<li><strong>" + escapeHtml(doc.title || ("Document #" + doc.id)) + "</strong> &mdash; " + escapeHtml(doc.authors || doc.source || "No authors") + "</li>").join("") + "</ul></section>"
     : "";
-  return `<article class="pdf-note"><h1>${title}</h1>${topics}${renderMarkdown(note.body)}${linked}</article>`;
+  return "<article id=\"" + escapeAttribute(printContentAnchor(note)) + "\" class=\"pdf-note\"><h1>" + title + "</h1>" + topics + renderMarkdown(note.body, { headingIds }) + linked + "</article>";
 }
 
 // Inlined into the print-only popup document (light theme, paper-friendly).
 const PDF_PRINT_CSS = `
   :root { color-scheme: light; }
-  body { font-family: Georgia, "Times New Roman", serif; color: #1a1a1a; background: #fff; margin: 0; padding: 3rem 1.5rem; line-height: 1.7; font-size: 1.06rem; }
-  .pdf-document { max-width: 42rem; margin: 0 auto; }
+  @page { margin: 0; }
+  body { font-family: Georgia, "Times New Roman", serif; color: #242424; background: #f5f5f3; margin: 0; padding: 1.6rem; line-height: 1.72; font-size: 1.05rem; }
+  .pdf-preview-shell { display: grid; grid-template-columns: minmax(210px, 260px) minmax(0, 1fr); gap: 1.6rem; align-items: start; width: 100%; }
+  .pdf-document { grid-column: 2; justify-self: center; width: min(100%, 56rem); max-width: 56rem; margin: 0; background: #fff; border: 1px solid #ddd9d2; border-radius: 3px; padding: 3.2rem 3.4rem; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04); }
   .pdf-document, .pdf-document * { overflow-wrap: break-word; word-wrap: break-word; }
-  h1, h2, h3, h4, h5 { font-family: Georgia, "Iowan Old Style", serif; line-height: 1.2; font-weight: 700; }
-  h1 { font-size: 2.1rem; margin: 0 0 0.6rem; }
-  h2 { font-size: 1.7rem; margin: 2rem 0 0.5rem; }
+  h1, h2, h3, h4, h5 { font-family: Georgia, "Iowan Old Style", serif; line-height: 1.2; font-weight: 700; color: #202020; }
+  h1 { font-size: 2.25rem; margin: 0 0 0.7rem; letter-spacing: 0; }
+  h2 { font-size: 1.62rem; margin: 2.2rem 0 0.55rem; }
   h3 { font-size: 1.42rem; margin: 1.7rem 0 0.4rem; }
   h4 { font-size: 1.2rem; margin: 1.5rem 0 0.35rem; }
   h5 { font-size: 1.05rem; margin: 1.3rem 0 0.3rem; text-transform: uppercase; letter-spacing: 0.03em; color: #555; }
   p { margin: 0 0 1rem; }
-  a { color: #0b6e62; word-break: break-word; }
+  a { color: #8a2f2b; word-break: break-word; text-decoration-thickness: 1px; text-underline-offset: 2px; }
   img { max-width: 100%; height: auto; display: block; margin: 1rem auto; }
   figure { margin: 1.4rem auto; text-align: center; }
   figure img { margin: 0 auto; }
   figcaption { margin-top: 0.5rem; font-size: 0.9rem; color: #555; font-style: italic; }
-  .pdf-toolbar { display: flex; justify-content: flex-end; max-width: 42rem; margin: 0 auto; padding: 0 0 0.5rem; }
-  .pdf-toolbar button { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 50%; cursor: pointer; border: 1px solid #d8d3c7; background: #fff; color: #0b6e62; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08); transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease; }
-  .pdf-toolbar button:hover { background: #0b6e62; border-color: #0b6e62; color: #fff; }
-  @media print { .pdf-toolbar { display: none; } }
+  .pdf-contents-panel { grid-column: 1; justify-self: start; width: 100%; position: sticky; top: 1rem; max-height: calc(100vh - 2rem); overflow: auto; padding-top: 0.2rem; }
+  .pdf-contents-panel, pre, .math-display { scrollbar-width: thin; scrollbar-color: #c8bfb5 transparent; }
+  .pdf-contents-panel::-webkit-scrollbar, pre::-webkit-scrollbar, .math-display::-webkit-scrollbar { width: 8px; height: 8px; }
+  .pdf-contents-panel::-webkit-scrollbar-track, pre::-webkit-scrollbar-track, .math-display::-webkit-scrollbar-track { background: transparent; }
+  .pdf-contents-panel::-webkit-scrollbar-thumb, pre::-webkit-scrollbar-thumb, .math-display::-webkit-scrollbar-thumb { background: #c8bfb5; border: 2px solid #fff; border-radius: 999px; }
+  .pdf-contents-panel::-webkit-scrollbar-thumb:hover, pre::-webkit-scrollbar-thumb:hover, .math-display::-webkit-scrollbar-thumb:hover { background: #9f9186; }
+  .pdf-contents-card { border-left: 3px solid #8a2f2b; background: #fff; padding: 0.9rem 0.95rem 1rem; box-shadow: none; }
+  .pdf-panel-kicker { margin: 0 0 0.35rem; text-transform: uppercase; letter-spacing: 0.12em; font: 700 0.66rem "Avenir Next", "Segoe UI", sans-serif; color: #777; }
+  .pdf-contents-card h2 { margin: 0 0 0.85rem; font: 700 1rem Georgia, "Times New Roman", serif; color: #222; }
+  .pdf-note-list, .pdf-heading-list { list-style: none; padding: 0; margin: 0; }
+  .pdf-note-list > li { padding: 0.72rem 0; border-top: 1px solid #e5e1da; }
+  .pdf-note-list > li:first-child { border-top: 0; padding-top: 0; }
+  .pdf-note-link { display: block; color: #222; font: 700 0.9rem "Avenir Next", "Segoe UI", sans-serif; text-decoration: none; }
+  .pdf-heading-list { margin-top: 0.45rem; }
+  .pdf-heading-list li { margin: 0.2rem 0; line-height: 1.35; }
+  .pdf-heading-list a { color: #666; font: 500 0.8rem "Avenir Next", "Segoe UI", sans-serif; text-decoration: none; }
+  .pdf-heading-list a:hover, .pdf-note-link:hover { color: #8a2f2b; text-decoration: underline; }
+  .pdf-heading-depth-2 { padding-left: 0.65rem; }
+  .pdf-heading-depth-3 { padding-left: 1.25rem; }
+  .pdf-contents-meta { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.35rem; }
+  .pdf-contents-meta span { border: 1px solid #ddd9d2; border-radius: 3px; padding: 0.05rem 0.38rem; color: #777; background: #fafafa; font: 600 0.66rem "Avenir Next", "Segoe UI", sans-serif; }
+  .pdf-toolbar { position: fixed; top: 1.25rem; right: 1.35rem; z-index: 20; display: flex; justify-content: flex-end; margin: 0; padding: 0; }
+  .pdf-toolbar button { display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px; border-radius: 3px; cursor: pointer; border: 1px solid #d6d1c8; background: #fff; color: #8a2f2b; box-shadow: none; transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease; }
+  .pdf-toolbar button:hover { background: #8a2f2b; border-color: #8a2f2b; color: #fff; }
+  @media (max-width: 900px) {
+    body { padding: 0.75rem; }
+    .pdf-preview-shell { grid-template-columns: minmax(0, 56rem); }
+    .pdf-contents-panel { grid-column: 1; position: static; max-height: none; }
+    .pdf-document { grid-column: 1; padding: 2rem 1.4rem; }
+  }
+  @media print {
+    body { background: #fff; padding: 0; }
+    .pdf-toolbar, .pdf-contents-panel { display: none; }
+    .pdf-preview-shell { display: block; }
+    .pdf-document { grid-column: auto; max-width: none; margin: 0; padding: 0.9in 1.05in; border: 0; border-radius: 0; box-shadow: none; }
+  }
   .pdf-note-topics { margin: 0 0 1.2rem; }
-  .pdf-note-topics span { display: inline-block; font-size: 0.75rem; padding: 0.1rem 0.5rem; margin-right: 0.3rem; border: 1px solid #999; border-radius: 999px; }
+  .pdf-note-topics span { display: inline-block; font: 600 0.72rem "Avenir Next", "Segoe UI", sans-serif; padding: 0.08rem 0.45rem; margin-right: 0.3rem; border: 1px solid #d9d5ce; border-radius: 3px; color: #777; background: #fafafa; }
   .pdf-linked { margin-top: 1.8rem; border-top: 1px solid #ccc; padding-top: 0.8rem; }
   .pdf-note { break-after: page; }
   .pdf-note:last-child { break-after: auto; }
-  blockquote { border-left: 3px solid #ccc; margin: 1rem 0; padding: 0.2rem 0 0.2rem 1rem; color: #444; }
+  blockquote { border-left: 3px solid #b55b50; margin: 1.1rem 0; padding: 0.2rem 0 0.2rem 1rem; color: #444; background: #faf9f7; }
   ul, ol { padding-left: 1.4rem; margin: 0 0 1rem; }
   li { margin: 0.25rem 0; }
   pre, code { font-family: "SFMono-Regular", Consolas, monospace; }
-  code { font-size: 0.9em; background: #f0f0f0; padding: 0.1em 0.35em; border-radius: 4px; }
-  pre { background: #f5f5f5; padding: 0.75rem; border-radius: 8px; overflow-x: auto; }
+  code { font-size: 0.9em; background: #f3f3f3; padding: 0.1em 0.35em; border-radius: 3px; }
+  pre { background: #f7f7f7; padding: 0.8rem; border: 1px solid #e2ded7; border-radius: 3px; overflow-x: auto; }
   pre code { background: none; padding: 0; }
   table { width: 100%; border-collapse: collapse; margin: 0 0 1rem; font-size: 0.96rem; }
   th, td { border: 1px solid #ddd; padding: 0.4rem 0.6rem; text-align: left; vertical-align: top; }
@@ -1492,7 +1577,7 @@ const PDF_TOOLBAR_HTML =
 // `sectionsHtml` MUST already be escaped/sanitized by the caller (see
 // buildNoteExportSection); PDF_PRINT_CSS / PDF_TOOLBAR_HTML are static constants.
 // All are written verbatim into the document, so never pass unsanitized input here.
-async function openNotePrintWindow(docTitle, sectionsHtml) {
+async function openNotePrintWindow(docTitle, sectionsHtml, contentsHtml = "") {
   // Open synchronously so the tab isn't blocked, then render math before writing.
   const win = window.open("", "_blank");
   if (!win) {
@@ -1506,7 +1591,7 @@ async function openNotePrintWindow(docTitle, sectionsHtml) {
   staged.innerHTML = sectionsHtml;
   await typesetMathAsync(staged).catch(() => {});
   const css = `${PDF_PRINT_CSS}${mathStylesheetCss()}`;
-  win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(docTitle)}</title><style>${css}</style></head><body>${PDF_TOOLBAR_HTML}${staged.outerHTML}</body></html>`);
+  win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(docTitle)}</title><style>${css}</style></head><body>${PDF_TOOLBAR_HTML}<div class="pdf-preview-shell">${contentsHtml}${staged.outerHTML}</div></body></html>`);
   win.document.close();
   // Don't auto-print: the standalone page stays open and the user clicks Save as PDF.
   win.focus();
@@ -1521,7 +1606,7 @@ async function exportNoteToPdf() {
   await saveNotebookNote({ renderAfterSave: false }).catch(() => {});
   const note = selectedNotebookNote();
   if (!note) return;
-  await openNotePrintWindow(note.title || "Note", buildNoteExportSection(note));
+  await openNotePrintWindow(note.title || "Note", buildNoteExportSection(note), buildPrintContentsPanel([note]));
 }
 
 async function exportAllNotesToPdf() {
@@ -1534,7 +1619,7 @@ async function exportAllNotesToPdf() {
     await saveNotebookNote({ renderAfterSave: false }).catch(() => {});
   }
   const sections = state.notebookNotes.map(buildNoteExportSection).join("");
-  await openNotePrintWindow("Notebook", sections);
+  await openNotePrintWindow("Notebook", sections, buildPrintContentsPanel(state.notebookNotes));
 }
 
 function referenceSearchMatches(doc, term) {
